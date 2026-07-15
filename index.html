@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard Prix / Mcap</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --card: #14171c;
+    --border: #22262e;
+    --text: #e7e9ec;
+    --muted: #8b93a1;
+    --green: #3ddc84;
+    --orange: #ffa53d;
+    --red: #ff5c5c;
+    --accent: #6d8bff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+  }
+  @media (max-width: 480px) {
+    body { padding: 14px; }
+  }
+  h1 {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 4px 0;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 20px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    max-width: 800px;
+  }
+  @media (max-width: 480px) {
+    .grid { grid-template-columns: 1fr; gap: 12px; }
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s ease;
+  }
+  @media (max-width: 480px) {
+    .card { padding: 14px; border-radius: 12px; }
+    .price-big { font-size: 22px; }
+    .row { font-size: 13px; }
+    .label, .value { font-size: 13px; }
+  }
+  .card.status-red { border-left-color: var(--red); }
+  .card.status-orange { border-left-color: var(--orange); }
+  .card.status-green { border-left-color: var(--green); }
+  .mcap-big { color: inherit; }
+  .card.status-red .mcap-big { color: var(--red); }
+  .card.status-orange .mcap-big { color: var(--orange); }
+  .card.status-green .mcap-big { color: var(--green); }
+  .card .name {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .card .pair {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
+  }
+  .row:first-of-type { border-top: none; }
+  .label {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .value {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .price-big {
+    font-size: 26px;
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .change {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .change.up { color: var(--green); }
+  .change.down { color: var(--red); }
+  .footer {
+    margin-top: 20px;
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .error {
+    color: var(--red);
+    font-size: 13px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  .skeleton {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .summary .row:first-of-type { border-top: none; }
+  .summary-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .note {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 10px;
+    line-height: 1.5;
+  }
+  .bottom-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    max-width: 800px;
+    margin-top: 16px;
+  }
+  @media (max-width: 480px) {
+    .bottom-row { grid-template-columns: 1fr; gap: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Dashboard Prix / Market Cap</h1>
+<div class="sub">Mise à jour automatique toutes les 15 secondes — source : Dexscreener</div>
+
+<div class="grid" id="grid"></div>
+
+<div class="bottom-row">
+  <div class="card summary" id="summary">
+    <div class="skeleton">Calcul du portefeuille...</div>
+  </div>
+  <div class="card eth-panel" id="eth-panel">
+    <div class="skeleton">Calcul en ETH...</div>
+  </div>
+</div>
+
+<div class="footer">
+  <div class="dot"></div>
+  <span id="lastUpdate">Chargement...</span>
+</div>
+
+<script>
+const pairs = [
+  { chain: "robinhood", address: "0x3da46e5488dd0db84d59c48a9d4d61dc82802554", low: 70000, high: 80000, bag: 7500000, invested: 527 },
+  { chain: "robinhood", address: "0xd3c6596edc15d3ef88b686636bbdd171246a205f", low: 140000, high: 160000, bag: 7500000, invested: 1000 }
+];
+
+function getStatus(mcap, low, high) {
+  if (mcap === null || mcap === undefined || isNaN(mcap)) return "";
+  if (mcap < low) return "status-red";
+  if (mcap < high) return "status-orange";
+  return "status-green";
+}
+
+const grid = document.getElementById("grid");
+
+// Créer les cartes vides au départ
+pairs.forEach((p, i) => {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.id = "card-" + i;
+  card.innerHTML = `<div class="skeleton">Chargement des données...</div>`;
+  grid.appendChild(card);
+});
+
+function fmtUsd(num) {
+  if (num === null || num === undefined || isNaN(num)) return "—";
+  const n = Number(num);
+  if (n >= 1) {
+    return "$" + n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  }
+  // petits prix : afficher plus de décimales significatives
+  return "$" + n.toPrecision(4);
+}
+
+function fmtMcap(num) {
+  if (num === null || num === undefined || isNaN(num)) return "—";
+  const n = Number(num);
+  if (n >= 1e9) return "$" + (n / 1e9).toFixed(2) + "B";
+  if (n >= 1e6) return "$" + (n / 1e6).toFixed(2) + "M";
+  if (n >= 1e3) return "$" + (n / 1e3).toFixed(1) + "K";
+  return "$" + n.toFixed(0);
+}
+
+const TOTAL_INVESTED = 2000;
+const ETH_INVESTED = 1.1;
+const bagValues = {}; // stocke la valeur $ actuelle de chaque bag par index
+const nativePrices = {}; // stocke priceUsd / priceNative (≈ prix ETH) par index
+
+async function fetchPair(p, i) {
+  const card = document.getElementById("card-" + i);
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/pairs/${p.chain}/${p.address}`);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const pair = data.pair || (data.pairs && data.pairs[0]);
+    if (!pair) throw new Error("Paire introuvable");
+
+    const priceUsd = pair.priceUsd ? parseFloat(pair.priceUsd) : null;
+    const mcap = pair.marketCap ?? pair.fdv ?? null;
+    const change24h = pair.priceChange && pair.priceChange.h24 !== undefined ? pair.priceChange.h24 : null;
+    const baseSymbol = pair.baseToken ? pair.baseToken.symbol : "?";
+    const quoteSymbol = pair.quoteToken ? pair.quoteToken.symbol : "?";
+    const dexUrl = pair.url || `https://dexscreener.com/${p.chain}/${p.address}`;
+
+    const changeClass = change24h === null ? "" : (change24h >= 0 ? "up" : "down");
+    const changeSign = change24h === null ? "" : (change24h >= 0 ? "+" : "");
+    const status = getStatus(mcap, p.low, p.high);
+
+    const bagValue = priceUsd !== null ? p.bag * priceUsd : null;
+    bagValues[i] = bagValue;
+    const priceNative = pair.priceNative ? parseFloat(pair.priceNative) : null;
+    if (priceUsd !== null && priceNative) {
+      nativePrices[i] = priceUsd / priceNative;
+    }
+    const pnl = bagValue !== null ? bagValue - p.invested : null;
+    const pnlPct = bagValue !== null && p.invested ? (pnl / p.invested) * 100 : null;
+    const pnlClass = pnl === null ? "" : (pnl >= 0 ? "up" : "down");
+    const pnlSign = pnl === null ? "" : (pnl >= 0 ? "+" : "");
+
+    card.className = "card" + (status ? " " + status : "");
+    card.innerHTML = `
+      <div class="name">${baseSymbol}</div>
+      <div class="pair"><a href="${dexUrl}" target="_blank">${baseSymbol} / ${quoteSymbol}</a></div>
+      <div class="price-big mcap-big">${fmtMcap(mcap)}</div>
+      ${change24h !== null ? `<div class="change ${changeClass}">${changeSign}${change24h.toFixed(2)}% (24h)</div>` : ""}
+      <div class="row">
+        <span class="label">Prix</span>
+        <span class="value">${fmtUsd(priceUsd)}</span>
+      </div>
+      <div class="row">
+        <span class="label">Liquidité</span>
+        <span class="value">${pair.liquidity && pair.liquidity.usd ? fmtMcap(pair.liquidity.usd) : "—"}</span>
+      </div>
+      <div class="row">
+        <span class="label">Mon bag</span>
+        <span class="value">${p.bag.toLocaleString("fr-FR")}</span>
+      </div>
+      <div class="row">
+        <span class="label">Valeur position</span>
+        <span class="value">${fmtMcap(bagValue)}</span>
+      </div>
+      <div class="row">
+        <span class="label">PnL (investi ${fmtMcap(p.invested)})</span>
+        <span class="value change ${pnlClass}">${pnlSign}${fmtMcap(Math.abs(pnl))} (${pnlSign}${pnlPct !== null ? pnlPct.toFixed(1) : "—"}%)</span>
+      </div>
+    `;
+  } catch (e) {
+    card.innerHTML = `<div class="name">Erreur</div><div class="error">${e.message}</div>`;
+  }
+}
+
+async function refreshAll() {
+  await Promise.all(pairs.map((p, i) => fetchPair(p, i)));
+  renderSummary();
+  renderEthPanel();
+  document.getElementById("lastUpdate").textContent =
+    "Dernière mise à jour : " + new Date().toLocaleTimeString("fr-FR");
+}
+
+function renderSummary() {
+  const summary = document.getElementById("summary");
+  const values = Object.values(bagValues);
+  if (values.some(v => v === null || v === undefined) || values.length < pairs.length) {
+    summary.innerHTML = `<div class="skeleton">Calcul du portefeuille...</div>`;
+    return;
+  }
+  const totalValue = values.reduce((a, b) => a + b, 0);
+  const totalPnl = totalValue - TOTAL_INVESTED;
+  const totalPnlPct = (totalPnl / TOTAL_INVESTED) * 100;
+  const pnlClass = totalPnl >= 0 ? "up" : "down";
+  const pnlSign = totalPnl >= 0 ? "+" : "";
+  const sumCostBasis = pairs.reduce((a, p) => a + p.invested, 0);
+  const alreadyLost = TOTAL_INVESTED - sumCostBasis;
+
+  summary.innerHTML = `
+    <div class="summary-title">Portefeuille total</div>
+    <div class="row">
+      <span class="label">Investi initial</span>
+      <span class="value">${fmtMcap(TOTAL_INVESTED)}</span>
+    </div>
+    <div class="row">
+      <span class="label">Valeur actuelle</span>
+      <span class="value">${fmtMcap(totalValue)}</span>
+    </div>
+    <div class="row">
+      <span class="label">PnL total</span>
+      <span class="value change ${pnlClass}">${pnlSign}${fmtMcap(Math.abs(totalPnl))} (${pnlSign}${totalPnlPct.toFixed(1)}%)</span>
+    </div>
+    <div class="note">Perte déjà actée lors du swap HODDETF → HPERP : ${fmtMcap(alreadyLost)} (c'est pour ça que 527$ + 1000$ ≠ 2000$ investis)</div>
+  `;
+}
+
+function renderEthPanel() {
+  const panel = document.getElementById("eth-panel");
+  const values = Object.values(bagValues);
+  const natives = Object.values(nativePrices);
+  if (values.some(v => v === null || v === undefined) || values.length < pairs.length || natives.length === 0) {
+    panel.innerHTML = `<div class="skeleton">Calcul en ETH...</div>`;
+    return;
+  }
+  const totalValue = values.reduce((a, b) => a + b, 0);
+  const ethPriceUsd = natives.reduce((a, b) => a + b, 0) / natives.length;
+  const totalValueEth = totalValue / ethPriceUsd;
+  const ethDiff = totalValueEth - ETH_INVESTED;
+  const ethDiffPct = (ethDiff / ETH_INVESTED) * 100;
+  const ethClass = ethDiff >= 0 ? "up" : "down";
+  const ethSign = ethDiff >= 0 ? "+" : "";
+
+  panel.innerHTML = `
+    <div class="summary-title">Valeur en ETH</div>
+    <div class="row">
+      <span class="label">Prix ETH (via pools)</span>
+      <span class="value">${fmtUsd(ethPriceUsd)}</span>
+    </div>
+    <div class="row">
+      <span class="label">ETH investi</span>
+      <span class="value">${ETH_INVESTED} ETH</span>
+    </div>
+    <div class="row">
+      <span class="label">Valeur actuelle</span>
+      <span class="value">${totalValueEth.toFixed(4)} ETH</span>
+    </div>
+    <div class="row">
+      <span class="label">Delta</span>
+      <span class="value change ${ethClass}">${ethSign}${ethDiff.toFixed(4)} ETH (${ethSign}${ethDiffPct.toFixed(1)}%)</span>
+    </div>
+    <div class="note">Prix ETH déduit des pools WETH (priceUsd / priceNative), moyenné sur les deux paires.</div>
+  `;
+}
+
+refreshAll();
+setInterval(refreshAll, 15000);
+</script>
+
+</body>
+</html>
