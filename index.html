@@ -181,8 +181,7 @@
 
 <script>
 const pairs = [
-  { chain: "robinhood", address: "0x3da46e5488dd0db84d59c48a9d4d61dc82802554", low: 70000, high: 80000, bag: 7500000, invested: 527 },
-  { chain: "robinhood", address: "0xd3c6596edc15d3ef88b686636bbdd171246a205f", low: 140000, high: 160000, bag: 7500000, invested: 1000 }
+  { chain: "robinhood", address: "0x3da46e5488dd0db84d59c48a9d4d61dc82802554", low: 70000, high: 80000, bag: 19253111, invested: 966.50 }
 ];
 
 function getStatus(mcap, low, high) {
@@ -310,8 +309,6 @@ function renderSummary() {
   const totalPnlPct = (totalPnl / TOTAL_INVESTED) * 100;
   const pnlClass = totalPnl >= 0 ? "up" : "down";
   const pnlSign = totalPnl >= 0 ? "+" : "";
-  const sumCostBasis = pairs.reduce((a, p) => a + p.invested, 0);
-  const alreadyLost = TOTAL_INVESTED - sumCostBasis;
 
   summary.innerHTML = `
     <div class="summary-title">Portefeuille total</div>
@@ -327,7 +324,6 @@ function renderSummary() {
       <span class="label">PnL total</span>
       <span class="value change ${pnlClass}">${pnlSign}${fmtMcap(Math.abs(totalPnl))} (${pnlSign}${totalPnlPct.toFixed(1)}%)</span>
     </div>
-    <div class="note">Perte déjà actée lors du swap HODDETF → HPERP : ${fmtMcap(alreadyLost)} (c'est pour ça que 527$ + 1000$ ≠ 2000$ investis)</div>
   `;
 }
 
@@ -365,7 +361,7 @@ function renderEthPanel() {
       <span class="label">Delta</span>
       <span class="value change ${ethClass}">${ethSign}${ethDiff.toFixed(4)} ETH (${ethSign}${ethDiffPct.toFixed(1)}%)</span>
     </div>
-    <div class="note">Prix ETH déduit des pools WETH (priceUsd / priceNative), moyenné sur les deux paires.</div>
+    <div class="note">Prix ETH déduit du pool WETH/HPERP (priceUsd / priceNative).</div>
   `;
 }
 
