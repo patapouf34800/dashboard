@@ -181,7 +181,7 @@
 
 <script>
 const pairs = [
-  { chain: "robinhood", address: "0x65137aF8C54199628f74db33573b3CdDE7409BE9", low: 32000, high: 34000, bag: 15517862, invested: 500 }
+  { chain: "robinhood", address: "0x65137aF8C54199628f74db33573b3CdDE7409BE9", low: 68000, high: 6900, bag: 3565868, invested: 250 }
 ];
 
 function getStatus(mcap, low, high) {
@@ -221,8 +221,8 @@ function fmtMcap(num) {
   return "$" + n.toFixed(0);
 }
 
-const TOTAL_INVESTED = 500;
-const ETH_INVESTED = 0.2627;
+const TOTAL_INVESTED = 250;
+const ETH_INVESTED = 0.1278;
 const bagValues = {}; // stocke la valeur $ actuelle de chaque bag par index
 const nativePrices = {}; // stocke priceUsd / priceNative (≈ prix ETH) par index
 
