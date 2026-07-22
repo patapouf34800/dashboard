@@ -156,12 +156,134 @@
   @media (max-width: 480px) {
     .bottom-row { grid-template-columns: 1fr; gap: 12px; }
   }
+  .header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    max-width: 800px;
+  }
+  .settings-btn {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 13px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .settings-btn:hover { border-color: var(--accent); }
+  .settings-panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+    max-width: 800px;
+    margin-bottom: 16px;
+  }
+  .settings-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .pair-row {
+    display: grid;
+    grid-template-columns: 1fr 1.6fr 0.9fr 0.7fr auto;
+    gap: 8px;
+    margin-bottom: 8px;
+    align-items: center;
+  }
+  @media (max-width: 480px) {
+    .pair-row { grid-template-columns: 1fr 1fr; }
+  }
+  .pair-row input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 7px 8px;
+    font-size: 13px;
+  }
+  .pair-row input:focus { outline: none; border-color: var(--accent); }
+  .pair-row .field-label {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 3px;
+    display: block;
+  }
+  .remove-row-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--red);
+    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .settings-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    padding: 9px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+  }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #0b0d10; font-weight: 600; }
+  .btn-ghost:hover { border-color: var(--accent); }
+  .eth-field {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    max-width: 220px;
+  }
+  .eth-field label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+  .eth-field input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 7px 8px;
+    font-size: 13px;
+  }
 </style>
 </head>
 <body>
 
-<h1>Dashboard Prix / Market Cap</h1>
-<div class="sub">Mise à jour automatique toutes les 15 secondes — source : Dexscreener</div>
+<div class="header-row">
+  <div>
+    <h1>Dashboard Prix / Market Cap</h1>
+    <div class="sub">Mise à jour automatique toutes les 15 secondes — source : Dexscreener</div>
+  </div>
+  <button class="settings-btn" id="settingsBtn">⚙️ Paramètres</button>
+</div>
+
+<div class="settings-panel" id="settingsPanel" style="display:none">
+  <div class="settings-title">Positions</div>
+  <div id="pairsFormRows"></div>
+  <button class="btn btn-ghost" id="addRowBtn" type="button">+ Ajouter une position</button>
+
+  <div class="eth-field">
+    <label for="ethInvestedInput">ETH investi (total)</label>
+    <input type="number" step="any" id="ethInvestedInput">
+  </div>
+
+  <div class="settings-actions">
+    <button class="btn btn-primary" id="saveConfigBtn" type="button">Enregistrer</button>
+    <button class="btn btn-ghost" id="cancelConfigBtn" type="button">Annuler</button>
+    <button class="btn btn-ghost" id="resetConfigBtn" type="button">Réinitialiser</button>
+  </div>
+</div>
 
 <div class="grid" id="grid"></div>
 
@@ -180,9 +302,53 @@
 </div>
 
 <script>
-const pairs = [
-  { chain: "robinhood", address: "0x65137aF8C54199628f74db33573b3CdDE7409BE9", low: 5000, high: 5000, bag: 2000000, invested: 10 }
+/* =========================================================
+   VALEURS PAR DÉFAUT — utilisées uniquement si rien n'est
+   encore enregistré dans le navigateur (localStorage).
+   Une fois que vous sauvegardez via le panneau "Paramètres",
+   ces valeurs par défaut ne sont plus utilisées (sauf si vous
+   cliquez sur "Réinitialiser").
+   ========================================================= */
+const DEFAULT_PAIRS = [
+  { chain: "robinhood", address: "0x65137aF8C54199628f74db33573b3CdDE7409BE9", bag: 2000000, invested: 10 },
 ];
+const DEFAULT_ETH_INVESTED = 0.0056;
+const STORAGE_KEY = "dexDashboardConfig_v1";
+
+function loadConfig() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.pairs) && parsed.pairs.length > 0) {
+        return {
+          pairs: parsed.pairs,
+          ethInvested: typeof parsed.ethInvested === "number" ? parsed.ethInvested : DEFAULT_ETH_INVESTED
+        };
+      }
+    }
+  } catch (e) {
+    console.warn("Config locale illisible, retour aux valeurs par défaut.", e);
+  }
+  return {
+    pairs: JSON.parse(JSON.stringify(DEFAULT_PAIRS)),
+    ethInvested: DEFAULT_ETH_INVESTED
+  };
+}
+
+function saveConfig(cfg) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+}
+
+function deriveLowHigh(list) {
+  list.forEach(p => {
+    p.low = (p.invested / p.bag) * 1e9;
+    p.high = p.low;
+  });
+}
+
+let { pairs, ethInvested: ETH_INVESTED } = loadConfig();
+deriveLowHigh(pairs);
 
 function getStatus(mcap, low, high) {
   if (mcap === null || mcap === undefined || isNaN(mcap)) return "";
@@ -192,14 +358,114 @@ function getStatus(mcap, low, high) {
 }
 
 const grid = document.getElementById("grid");
+const bagValues = {};
+const nativePrices = {};
 
-// Créer les cartes vides au départ
-pairs.forEach((p, i) => {
-  const card = document.createElement("div");
-  card.className = "card";
-  card.id = "card-" + i;
-  card.innerHTML = `<div class="skeleton">Chargement des données...</div>`;
-  grid.appendChild(card);
+function initGrid() {
+  grid.innerHTML = "";
+  for (const key in bagValues) delete bagValues[key];
+  for (const key in nativePrices) delete nativePrices[key];
+  pairs.forEach((p, i) => {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.id = "card-" + i;
+    card.innerHTML = `<div class="skeleton">Chargement des données...</div>`;
+    grid.appendChild(card);
+  });
+}
+
+initGrid();
+
+/* =========================================================
+   PANNEAU DE PARAMÈTRES
+   ========================================================= */
+const settingsBtn = document.getElementById("settingsBtn");
+const settingsPanel = document.getElementById("settingsPanel");
+const pairsFormRows = document.getElementById("pairsFormRows");
+const ethInvestedInput = document.getElementById("ethInvestedInput");
+
+function makeRow(p) {
+  const row = document.createElement("div");
+  row.className = "pair-row";
+  row.innerHTML = `
+    <div>
+      <span class="field-label">Chain</span>
+      <input type="text" class="f-chain" value="${p.chain ?? ""}" placeholder="ex: ethereum">
+    </div>
+    <div>
+      <span class="field-label">Adresse de la pool</span>
+      <input type="text" class="f-address" value="${p.address ?? ""}" placeholder="0x...">
+    </div>
+    <div>
+      <span class="field-label">Bag (tokens)</span>
+      <input type="number" step="any" class="f-bag" value="${p.bag ?? ""}">
+    </div>
+    <div>
+      <span class="field-label">Investi ($)</span>
+      <input type="number" step="any" class="f-invested" value="${p.invested ?? ""}">
+    </div>
+    <button type="button" class="remove-row-btn" title="Supprimer">✕</button>
+  `;
+  row.querySelector(".remove-row-btn").addEventListener("click", () => row.remove());
+  return row;
+}
+
+function renderSettingsForm() {
+  pairsFormRows.innerHTML = "";
+  pairs.forEach(p => pairsFormRows.appendChild(makeRow(p)));
+  ethInvestedInput.value = ETH_INVESTED;
+}
+
+document.getElementById("addRowBtn").addEventListener("click", () => {
+  pairsFormRows.appendChild(makeRow({ chain: "", address: "", bag: "", invested: "" }));
+});
+
+settingsBtn.addEventListener("click", () => {
+  const opening = settingsPanel.style.display === "none";
+  if (opening) renderSettingsForm();
+  settingsPanel.style.display = opening ? "block" : "none";
+});
+
+document.getElementById("cancelConfigBtn").addEventListener("click", () => {
+  settingsPanel.style.display = "none";
+});
+
+document.getElementById("resetConfigBtn").addEventListener("click", () => {
+  if (!confirm("Réinitialiser aux valeurs par défaut ? Vos modifications enregistrées seront effacées.")) return;
+  localStorage.removeItem(STORAGE_KEY);
+  const cfg = loadConfig();
+  pairs = cfg.pairs;
+  ETH_INVESTED = cfg.ethInvested;
+  deriveLowHigh(pairs);
+  initGrid();
+  settingsPanel.style.display = "none";
+  refreshAll();
+});
+
+document.getElementById("saveConfigBtn").addEventListener("click", () => {
+  const rows = pairsFormRows.querySelectorAll(".pair-row");
+  const newPairs = [];
+  rows.forEach(row => {
+    const chain = row.querySelector(".f-chain").value.trim();
+    const address = row.querySelector(".f-address").value.trim();
+    const bag = parseFloat(row.querySelector(".f-bag").value);
+    const invested = parseFloat(row.querySelector(".f-invested").value);
+    if (chain && address && bag > 0 && invested >= 0) {
+      newPairs.push({ chain, address, bag, invested });
+    }
+  });
+  if (newPairs.length === 0) {
+    alert("Ajoutez au moins une position valide (chain, adresse, bag > 0, investi rempli).");
+    return;
+  }
+  const newEth = parseFloat(ethInvestedInput.value);
+  ETH_INVESTED = isNaN(newEth) ? 0 : newEth;
+  pairs = newPairs;
+  deriveLowHigh(pairs);
+  saveConfig({ pairs, ethInvested: ETH_INVESTED });
+  initGrid();
+  settingsPanel.style.display = "none";
+  refreshAll();
 });
 
 function fmtUsd(num) {
@@ -220,11 +486,6 @@ function fmtMcap(num) {
   if (n >= 1e3) return "$" + (n / 1e3).toFixed(1) + "K";
   return "$" + n.toFixed(0);
 }
-
-const TOTAL_INVESTED = 10;
-const ETH_INVESTED = 0.0056;
-const bagValues = {}; // stocke la valeur $ actuelle de chaque bag par index
-const nativePrices = {}; // stocke priceUsd / priceNative (≈ prix ETH) par index
 
 async function fetchPair(p, i) {
   const card = document.getElementById("card-" + i);
@@ -305,6 +566,7 @@ function renderSummary() {
     return;
   }
   const totalValue = values.reduce((a, b) => a + b, 0);
+  const TOTAL_INVESTED = pairs.reduce((sum, p) => sum + p.invested, 0);
   const totalPnl = totalValue - TOTAL_INVESTED;
   const totalPnlPct = (totalPnl / TOTAL_INVESTED) * 100;
   const pnlClass = totalPnl >= 0 ? "up" : "down";
