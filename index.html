@@ -240,6 +240,48 @@
   }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #0b0d10; font-weight: 600; }
   .btn-ghost:hover { border-color: var(--accent); }
+  .setting-field {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    max-width: 220px;
+  }
+  .setting-field label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+  .setting-field input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 7px 8px;
+    font-size: 13px;
+  }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+  }
+  .modal-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    max-width: 420px;
+    width: 100%;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  .modal-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 14px;
+  }
+  .modal-box .row:first-of-type { border-top: none; }
   .sort-bar {
     display: flex;
     align-items: center;
@@ -279,10 +321,25 @@
   <div id="pairsFormRows"></div>
   <button class="btn btn-ghost" id="addRowBtn" type="button">+ Ajouter une position</button>
 
+  <div class="setting-field">
+    <label for="alertThresholdInput">Seuil d'alerte au démarrage (%)</label>
+    <input type="number" step="any" id="alertThresholdInput">
+  </div>
+
   <div class="settings-actions">
     <button class="btn btn-primary" id="saveConfigBtn" type="button">Enregistrer</button>
     <button class="btn btn-ghost" id="cancelConfigBtn" type="button">Annuler</button>
     <button class="btn btn-ghost" id="resetConfigBtn" type="button">Réinitialiser</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="alertOverlay">
+  <div class="modal-box">
+    <div class="modal-title">🚀 Mouvement(s) important(s) détecté(s)</div>
+    <div id="alertList"></div>
+    <div class="settings-actions">
+      <button class="btn btn-primary" id="alertOkBtn" type="button">OK</button>
+    </div>
   </div>
 </div>
 
@@ -320,7 +377,9 @@
 const DEFAULT_PAIRS = [
   { chain: "robinhood", address: "0x65137aF8C54199628f74db33573b3CdDE7409BE9", bag: 2000000, invested: 10 },
 ];
+const DEFAULT_ALERT_THRESHOLD = 30;
 const STORAGE_KEY = "dexDashboardConfig_v1";
+const SNAPSHOT_KEY = "dexDashboardSnapshots_v1";
 
 function loadConfig() {
   try {
@@ -329,7 +388,8 @@ function loadConfig() {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.pairs) && parsed.pairs.length > 0) {
         return {
-          pairs: parsed.pairs
+          pairs: parsed.pairs,
+          alertThreshold: typeof parsed.alertThreshold === "number" ? parsed.alertThreshold : DEFAULT_ALERT_THRESHOLD
         };
       }
     }
@@ -337,8 +397,22 @@ function loadConfig() {
     console.warn("Config locale illisible, retour aux valeurs par défaut.", e);
   }
   return {
-    pairs: JSON.parse(JSON.stringify(DEFAULT_PAIRS))
+    pairs: JSON.parse(JSON.stringify(DEFAULT_PAIRS)),
+    alertThreshold: DEFAULT_ALERT_THRESHOLD
   };
+}
+
+function loadSnapshots() {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveSnapshots(snap) {
+  localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snap));
 }
 
 function saveConfig(cfg) {
@@ -352,8 +426,10 @@ function deriveLowHigh(list) {
   });
 }
 
-let { pairs } = loadConfig();
+let { pairs, alertThreshold: ALERT_THRESHOLD } = loadConfig();
 deriveLowHigh(pairs);
+let snapshots = loadSnapshots();
+let startupCheckDone = false;
 
 function getStatus(mcap, low, high) {
   if (mcap === null || mcap === undefined || isNaN(mcap)) return "";
@@ -419,6 +495,7 @@ function applySort() {
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsPanel = document.getElementById("settingsPanel");
 const pairsFormRows = document.getElementById("pairsFormRows");
+const alertThresholdInput = document.getElementById("alertThresholdInput");
 
 function makeRow(p) {
   const row = document.createElement("div");
@@ -449,6 +526,7 @@ function makeRow(p) {
 function renderSettingsForm() {
   pairsFormRows.innerHTML = "";
   pairs.forEach(p => pairsFormRows.appendChild(makeRow(p)));
+  alertThresholdInput.value = ALERT_THRESHOLD;
 }
 
 document.getElementById("addRowBtn").addEventListener("click", () => {
@@ -470,6 +548,7 @@ document.getElementById("resetConfigBtn").addEventListener("click", () => {
   localStorage.removeItem(STORAGE_KEY);
   const cfg = loadConfig();
   pairs = cfg.pairs;
+  ALERT_THRESHOLD = cfg.alertThreshold;
   deriveLowHigh(pairs);
   initGrid();
   settingsPanel.style.display = "none";
@@ -492,9 +571,11 @@ document.getElementById("saveConfigBtn").addEventListener("click", () => {
     alert("Ajoutez au moins une position valide (chain, adresse, bag > 0, investi rempli).");
     return;
   }
+  const newThreshold = parseFloat(alertThresholdInput.value);
+  ALERT_THRESHOLD = isNaN(newThreshold) || newThreshold <= 0 ? DEFAULT_ALERT_THRESHOLD : newThreshold;
   pairs = newPairs;
   deriveLowHigh(pairs);
-  saveConfig({ pairs });
+  saveConfig({ pairs, alertThreshold: ALERT_THRESHOLD });
   initGrid();
   settingsPanel.style.display = "none";
   refreshAll();
@@ -546,7 +627,7 @@ async function fetchPair(p, i) {
     const pnlClass = pnl === null ? "" : (pnl >= 0 ? "up" : "down");
     const pnlSign = pnl === null ? "" : (pnl >= 0 ? "+" : "");
 
-    metrics[i] = { value: bagValue, pnl: pnl, mcap: mcap };
+    metrics[i] = { value: bagValue, pnl: pnl, mcap: mcap, symbol: baseSymbol };
 
     card.className = "card" + (status ? " " + status : "");
     card.innerHTML = `
@@ -585,9 +666,64 @@ async function refreshAll() {
   await Promise.all(pairs.map((p, i) => fetchPair(p, i)));
   applySort();
   renderSummary();
+  checkStartupAlerts();
   document.getElementById("lastUpdate").textContent =
     "Dernière mise à jour : " + new Date().toLocaleTimeString("fr-FR");
 }
+
+/* =========================================================
+   ALERTE AU DÉMARRAGE (mouvement de valeur position depuis
+   la dernière consultation). Ne s'exécute qu'une seule fois
+   par chargement de page, quel que soit le nombre de positions
+   qui déclenchent l'alerte (une seule popup regroupée).
+   ========================================================= */
+function checkStartupAlerts() {
+  if (startupCheckDone) return;
+  startupCheckDone = true;
+
+  const triggered = [];
+  pairs.forEach((p, i) => {
+    const m = metrics[i];
+    if (!m || m.value === null || m.value === undefined || isNaN(m.value)) return;
+    const key = p.chain + ":" + p.address;
+    const prev = snapshots[key];
+    if (typeof prev === "number" && prev > 0) {
+      const changePct = ((m.value - prev) / prev) * 100;
+      if (Math.abs(changePct) >= ALERT_THRESHOLD) {
+        triggered.push({
+          name: m.symbol || (p.chain + " " + p.address.slice(0, 6)),
+          changePct,
+          prevValue: prev,
+          currentValue: m.value
+        });
+      }
+    }
+    snapshots[key] = m.value;
+  });
+  saveSnapshots(snapshots);
+
+  if (triggered.length > 0) showAlertModal(triggered);
+}
+
+function showAlertModal(triggered) {
+  triggered.sort((a, b) => b.changePct - a.changePct);
+  const list = document.getElementById("alertList");
+  list.innerHTML = triggered.map(t => {
+    const cls = t.changePct >= 0 ? "up" : "down";
+    const sign = t.changePct >= 0 ? "+" : "";
+    return `
+      <div class="row">
+        <span class="label">${t.name}</span>
+        <span class="value change ${cls}">${sign}${t.changePct.toFixed(1)}% (${fmtMcap(t.prevValue)} → ${fmtMcap(t.currentValue)})</span>
+      </div>
+    `;
+  }).join("");
+  document.getElementById("alertOverlay").style.display = "flex";
+}
+
+document.getElementById("alertOkBtn").addEventListener("click", () => {
+  document.getElementById("alertOverlay").style.display = "none";
+});
 
 function renderSummary() {
   const summary = document.getElementById("summary");
