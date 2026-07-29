@@ -240,22 +240,6 @@
   }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #0b0d10; font-weight: 600; }
   .btn-ghost:hover { border-color: var(--accent); }
-  .eth-field {
-    margin-top: 14px;
-    padding-top: 14px;
-    border-top: 1px solid var(--border);
-    max-width: 220px;
-  }
-  .eth-field label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
-  .eth-field input {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    border-radius: 8px;
-    padding: 7px 8px;
-    font-size: 13px;
-  }
   .sort-bar {
     display: flex;
     align-items: center;
@@ -295,11 +279,6 @@
   <div id="pairsFormRows"></div>
   <button class="btn btn-ghost" id="addRowBtn" type="button">+ Ajouter une position</button>
 
-  <div class="eth-field">
-    <label for="ethInvestedInput">ETH investi (total)</label>
-    <input type="number" step="any" id="ethInvestedInput">
-  </div>
-
   <div class="settings-actions">
     <button class="btn btn-primary" id="saveConfigBtn" type="button">Enregistrer</button>
     <button class="btn btn-ghost" id="cancelConfigBtn" type="button">Annuler</button>
@@ -308,7 +287,7 @@
 </div>
 
 <div class="sort-bar">
-  <label for="sortSelect">Classement (croissant) :</label>
+  <label for="sortSelect">Classement (décroissant) :</label>
   <select id="sortSelect">
     <option value="none">Aucun (ordre par défaut)</option>
     <option value="value">Valeur position</option>
@@ -322,9 +301,6 @@
 <div class="bottom-row">
   <div class="card summary" id="summary">
     <div class="skeleton">Calcul du portefeuille...</div>
-  </div>
-  <div class="card eth-panel" id="eth-panel">
-    <div class="skeleton">Calcul en ETH...</div>
   </div>
 </div>
 
@@ -344,7 +320,6 @@
 const DEFAULT_PAIRS = [
   { chain: "robinhood", address: "0x65137aF8C54199628f74db33573b3CdDE7409BE9", bag: 2000000, invested: 10 },
 ];
-const DEFAULT_ETH_INVESTED = 0.0056;
 const STORAGE_KEY = "dexDashboardConfig_v1";
 
 function loadConfig() {
@@ -354,8 +329,7 @@ function loadConfig() {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.pairs) && parsed.pairs.length > 0) {
         return {
-          pairs: parsed.pairs,
-          ethInvested: typeof parsed.ethInvested === "number" ? parsed.ethInvested : DEFAULT_ETH_INVESTED
+          pairs: parsed.pairs
         };
       }
     }
@@ -363,8 +337,7 @@ function loadConfig() {
     console.warn("Config locale illisible, retour aux valeurs par défaut.", e);
   }
   return {
-    pairs: JSON.parse(JSON.stringify(DEFAULT_PAIRS)),
-    ethInvested: DEFAULT_ETH_INVESTED
+    pairs: JSON.parse(JSON.stringify(DEFAULT_PAIRS))
   };
 }
 
@@ -379,7 +352,7 @@ function deriveLowHigh(list) {
   });
 }
 
-let { pairs, ethInvested: ETH_INVESTED } = loadConfig();
+let { pairs } = loadConfig();
 deriveLowHigh(pairs);
 
 function getStatus(mcap, low, high) {
@@ -391,14 +364,13 @@ function getStatus(mcap, low, high) {
 
 const grid = document.getElementById("grid");
 const bagValues = {};
-const nativePrices = {};
 const metrics = {};
-let sortBy = "none";
+const SORT_STORAGE_KEY = "dexDashboardSort_v1";
+let sortBy = localStorage.getItem(SORT_STORAGE_KEY) || "none";
 
 function initGrid() {
   grid.innerHTML = "";
   for (const key in bagValues) delete bagValues[key];
-  for (const key in nativePrices) delete nativePrices[key];
   for (const key in metrics) delete metrics[key];
   pairs.forEach((p, i) => {
     const card = document.createElement("div");
@@ -415,8 +387,10 @@ initGrid();
    CLASSEMENT (TRI)
    ========================================================= */
 const sortSelect = document.getElementById("sortSelect");
+sortSelect.value = sortBy;
 sortSelect.addEventListener("change", (e) => {
   sortBy = e.target.value;
+  localStorage.setItem(SORT_STORAGE_KEY, sortBy);
   applySort();
 });
 
@@ -431,7 +405,7 @@ function applySort() {
     if (aInvalid && bInvalid) return 0;
     if (aInvalid) return 1;
     if (bInvalid) return -1;
-    return ma - mb; // croissant
+    return mb - ma; // décroissant
   });
   indices.forEach(i => {
     const card = document.getElementById("card-" + i);
@@ -445,7 +419,6 @@ function applySort() {
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsPanel = document.getElementById("settingsPanel");
 const pairsFormRows = document.getElementById("pairsFormRows");
-const ethInvestedInput = document.getElementById("ethInvestedInput");
 
 function makeRow(p) {
   const row = document.createElement("div");
@@ -476,7 +449,6 @@ function makeRow(p) {
 function renderSettingsForm() {
   pairsFormRows.innerHTML = "";
   pairs.forEach(p => pairsFormRows.appendChild(makeRow(p)));
-  ethInvestedInput.value = ETH_INVESTED;
 }
 
 document.getElementById("addRowBtn").addEventListener("click", () => {
@@ -498,7 +470,6 @@ document.getElementById("resetConfigBtn").addEventListener("click", () => {
   localStorage.removeItem(STORAGE_KEY);
   const cfg = loadConfig();
   pairs = cfg.pairs;
-  ETH_INVESTED = cfg.ethInvested;
   deriveLowHigh(pairs);
   initGrid();
   settingsPanel.style.display = "none";
@@ -521,11 +492,9 @@ document.getElementById("saveConfigBtn").addEventListener("click", () => {
     alert("Ajoutez au moins une position valide (chain, adresse, bag > 0, investi rempli).");
     return;
   }
-  const newEth = parseFloat(ethInvestedInput.value);
-  ETH_INVESTED = isNaN(newEth) ? 0 : newEth;
   pairs = newPairs;
   deriveLowHigh(pairs);
-  saveConfig({ pairs, ethInvested: ETH_INVESTED });
+  saveConfig({ pairs });
   initGrid();
   settingsPanel.style.display = "none";
   refreshAll();
@@ -572,10 +541,6 @@ async function fetchPair(p, i) {
 
     const bagValue = priceUsd !== null ? p.bag * priceUsd : null;
     bagValues[i] = bagValue;
-    const priceNative = pair.priceNative ? parseFloat(pair.priceNative) : null;
-    if (priceUsd !== null && priceNative) {
-      nativePrices[i] = priceUsd / priceNative;
-    }
     const pnl = bagValue !== null ? bagValue - p.invested : null;
     const pnlPct = bagValue !== null && p.invested ? (pnl / p.invested) * 100 : null;
     const pnlClass = pnl === null ? "" : (pnl >= 0 ? "up" : "down");
@@ -620,7 +585,6 @@ async function refreshAll() {
   await Promise.all(pairs.map((p, i) => fetchPair(p, i)));
   applySort();
   renderSummary();
-  renderEthPanel();
   document.getElementById("lastUpdate").textContent =
     "Dernière mise à jour : " + new Date().toLocaleTimeString("fr-FR");
 }
@@ -653,44 +617,6 @@ function renderSummary() {
       <span class="label">PnL total</span>
       <span class="value change ${pnlClass}">${pnlSign}${fmtMcap(Math.abs(totalPnl))} (${pnlSign}${totalPnlPct.toFixed(1)}%)</span>
     </div>
-  `;
-}
-
-function renderEthPanel() {
-  const panel = document.getElementById("eth-panel");
-  const values = Object.values(bagValues);
-  const natives = Object.values(nativePrices);
-  if (values.some(v => v === null || v === undefined) || values.length < pairs.length || natives.length === 0) {
-    panel.innerHTML = `<div class="skeleton">Calcul en ETH...</div>`;
-    return;
-  }
-  const totalValue = values.reduce((a, b) => a + b, 0);
-  const ethPriceUsd = natives.reduce((a, b) => a + b, 0) / natives.length;
-  const totalValueEth = totalValue / ethPriceUsd;
-  const ethDiff = totalValueEth - ETH_INVESTED;
-  const ethDiffPct = (ethDiff / ETH_INVESTED) * 100;
-  const ethClass = ethDiff >= 0 ? "up" : "down";
-  const ethSign = ethDiff >= 0 ? "+" : "";
-
-  panel.innerHTML = `
-    <div class="summary-title">Valeur en ETH</div>
-    <div class="row">
-      <span class="label">Prix ETH (via pools)</span>
-      <span class="value">${fmtUsd(ethPriceUsd)}</span>
-    </div>
-    <div class="row">
-      <span class="label">ETH investi</span>
-      <span class="value">${ETH_INVESTED} ETH</span>
-    </div>
-    <div class="row">
-      <span class="label">Valeur actuelle</span>
-      <span class="value">${totalValueEth.toFixed(4)} ETH</span>
-    </div>
-    <div class="row">
-      <span class="label">Delta</span>
-      <span class="value change ${ethClass}">${ethSign}${ethDiff.toFixed(4)} ETH (${ethSign}${ethDiffPct.toFixed(1)}%)</span>
-    </div>
-    <div class="note">Prix ETH déduit du pool WETH/HPERP (priceUsd / priceNative).</div>
   `;
 }
 
