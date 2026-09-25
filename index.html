@@ -65,6 +65,7 @@
   .card.status-red { border-left-color: var(--red); }
   .card.status-orange { border-left-color: var(--orange); }
   .card.status-green { border-left-color: var(--green); }
+  .card.status-accent { border-left-color: var(--accent); }
   .mcap-big { color: inherit; }
   .card.status-red .mcap-big { color: var(--red); }
   .card.status-orange .mcap-big { color: var(--orange); }
@@ -83,6 +84,7 @@
     display: flex;
     justify-content: space-between;
     align-items: baseline;
+    gap: 12px;
     padding: 8px 0;
     border-top: 1px solid var(--border);
   }
@@ -94,6 +96,13 @@
   .value {
     font-size: 15px;
     font-weight: 600;
+    text-align: right;
+  }
+  .value small {
+    display: block;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--muted);
   }
   .price-big {
     font-size: 26px;
@@ -187,6 +196,11 @@
     font-weight: 600;
     margin-bottom: 12px;
   }
+  .settings-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
   .pair-row {
     display: grid;
     grid-template-columns: 1fr 1.6fr 0.9fr 0.7fr auto;
@@ -213,6 +227,25 @@
     margin-bottom: 3px;
     display: block;
   }
+  .account-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  @media (max-width: 480px) {
+    .account-row { grid-template-columns: 1fr; }
+  }
+  .account-row label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 3px; }
+  .account-row input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 7px 8px;
+    font-size: 13px;
+  }
+  .account-row input:focus { outline: none; border-color: var(--accent); }
   .remove-row-btn {
     background: none;
     border: 1px solid var(--border);
@@ -304,6 +337,42 @@
     cursor: pointer;
   }
   .sort-bar select:focus { outline: none; border-color: var(--accent); }
+
+  /* ---------- Onglets ---------- */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    max-width: 800px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 14px;
+    cursor: pointer;
+    margin-bottom: -1px;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+  .view { display: none; }
+  .view.active { display: block; }
+  .account-wrap { max-width: 800px; }
+  .account-total {
+    font-size: 30px;
+    font-weight: 700;
+    color: var(--accent);
+    margin: 4px 0 2px 0;
+  }
+  .account-usd {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
 </style>
 </head>
 <body>
@@ -320,6 +389,24 @@
   <div class="settings-title">Positions</div>
   <div id="pairsFormRows"></div>
   <button class="btn btn-ghost" id="addRowBtn" type="button">+ Ajouter une position</button>
+
+  <div class="settings-section">
+    <div class="settings-title">Compte total</div>
+    <div class="account-row">
+      <div>
+        <label for="accAvaxInput">Quantité d'AVAX</label>
+        <input type="number" step="any" min="0" id="accAvaxInput" placeholder="0">
+      </div>
+      <div>
+        <label for="accPharInput">Quantité de PHAR</label>
+        <input type="number" step="any" min="0" id="accPharInput" placeholder="0">
+      </div>
+      <div>
+        <label for="accSavaxInput">Quantité de sAVAX</label>
+        <input type="number" step="any" min="0" id="accSavaxInput" placeholder="0">
+      </div>
+    </div>
+  </div>
 
   <div class="setting-field">
     <label for="alertThresholdInput">Seuil d'alerte au démarrage (%)</label>
@@ -343,21 +430,38 @@
   </div>
 </div>
 
-<div class="sort-bar">
-  <label for="sortSelect">Classement (décroissant) :</label>
-  <select id="sortSelect">
-    <option value="none">Aucun (ordre par défaut)</option>
-    <option value="value">Valeur position</option>
-    <option value="pnl">PnL</option>
-    <option value="mcap">Market Cap</option>
-  </select>
+<div class="tabs">
+  <button class="tab-btn" data-tab="positions" type="button">Positions</button>
+  <button class="tab-btn" data-tab="account" type="button">Compte total</button>
 </div>
 
-<div class="grid" id="grid"></div>
+<!-- ================= ONGLET POSITIONS ================= -->
+<div class="view" id="view-positions">
+  <div class="sort-bar">
+    <label for="sortSelect">Classement (décroissant) :</label>
+    <select id="sortSelect">
+      <option value="none">Aucun (ordre par défaut)</option>
+      <option value="value">Valeur position</option>
+      <option value="pnl">PnL</option>
+      <option value="mcap">Market Cap</option>
+    </select>
+  </div>
 
-<div class="bottom-row">
-  <div class="card summary" id="summary">
-    <div class="skeleton">Calcul du portefeuille...</div>
+  <div class="grid" id="grid"></div>
+
+  <div class="bottom-row">
+    <div class="card summary" id="summary">
+      <div class="skeleton">Calcul du portefeuille...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= ONGLET COMPTE TOTAL ================= -->
+<div class="view" id="view-account">
+  <div class="account-wrap">
+    <div class="card status-accent" id="accountCard">
+      <div class="skeleton">Chargement du compte...</div>
+    </div>
   </div>
 </div>
 
@@ -378,8 +482,33 @@ const DEFAULT_PAIRS = [
   { chain: "blabla", address: "0x65137aF8C54199627f74db33573b3CdDE7409BE9", bag: 2000000, invested: 10 },
 ];
 const DEFAULT_ALERT_THRESHOLD = 30;
+const DEFAULT_ACCOUNT = { avax: 0, phar: 0, savax: 0 };
 const STORAGE_KEY = "dexDashboardConfig_v1";
 const SNAPSHOT_KEY = "dexDashboardSnapshots_v1";
+const TAB_STORAGE_KEY = "dexDashboardTab_v1";
+
+/* =========================================================
+   COMPTE TOTAL — adresses des tokens sur Avalanche C-Chain
+   (modifiables ici si un token migre un jour)
+   ========================================================= */
+const ACCOUNT_CHAIN = "avalanche";
+const TOKENS = {
+  WAVAX: "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7",
+  PHAR:  "0x13A466998Ce03Db73aBc2d4DF3bBD845Ed1f28E7", // PHAR (Pharaoh V3)
+  SAVAX: "0x2b2C81e08f1Af8835a78Bb2A90AE924ACE0eA4bE", // sAVAX (Benqi)
+};
+const PHAR_TAX_DIVISOR = 2; // PHAR compté à 50 % à cause de la taxe
+
+function sanitizeAccount(a) {
+  const out = { ...DEFAULT_ACCOUNT };
+  if (a && typeof a === "object") {
+    ["avax", "phar", "savax"].forEach(k => {
+      const v = parseFloat(a[k]);
+      out[k] = isNaN(v) || v < 0 ? 0 : v;
+    });
+  }
+  return out;
+}
 
 function loadConfig() {
   try {
@@ -389,7 +518,8 @@ function loadConfig() {
       if (parsed && Array.isArray(parsed.pairs) && parsed.pairs.length > 0) {
         return {
           pairs: parsed.pairs,
-          alertThreshold: typeof parsed.alertThreshold === "number" ? parsed.alertThreshold : DEFAULT_ALERT_THRESHOLD
+          alertThreshold: typeof parsed.alertThreshold === "number" ? parsed.alertThreshold : DEFAULT_ALERT_THRESHOLD,
+          account: sanitizeAccount(parsed.account)
         };
       }
     }
@@ -398,7 +528,8 @@ function loadConfig() {
   }
   return {
     pairs: JSON.parse(JSON.stringify(DEFAULT_PAIRS)),
-    alertThreshold: DEFAULT_ALERT_THRESHOLD
+    alertThreshold: DEFAULT_ALERT_THRESHOLD,
+    account: { ...DEFAULT_ACCOUNT }
   };
 }
 
@@ -426,7 +557,7 @@ function deriveLowHigh(list) {
   });
 }
 
-let { pairs, alertThreshold: ALERT_THRESHOLD } = loadConfig();
+let { pairs, alertThreshold: ALERT_THRESHOLD, account } = loadConfig();
 deriveLowHigh(pairs);
 let snapshots = loadSnapshots();
 let startupCheckDone = false;
@@ -458,6 +589,20 @@ function initGrid() {
 }
 
 initGrid();
+
+/* =========================================================
+   ONGLETS
+   ========================================================= */
+const tabButtons = document.querySelectorAll(".tab-btn");
+function setTab(tab) {
+  if (tab !== "positions" && tab !== "account") tab = "positions";
+  tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  document.getElementById("view-positions").classList.toggle("active", tab === "positions");
+  document.getElementById("view-account").classList.toggle("active", tab === "account");
+  localStorage.setItem(TAB_STORAGE_KEY, tab);
+}
+tabButtons.forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
+setTab(localStorage.getItem(TAB_STORAGE_KEY) || "positions");
 
 /* =========================================================
    CLASSEMENT (TRI)
@@ -496,6 +641,9 @@ const settingsBtn = document.getElementById("settingsBtn");
 const settingsPanel = document.getElementById("settingsPanel");
 const pairsFormRows = document.getElementById("pairsFormRows");
 const alertThresholdInput = document.getElementById("alertThresholdInput");
+const accAvaxInput = document.getElementById("accAvaxInput");
+const accPharInput = document.getElementById("accPharInput");
+const accSavaxInput = document.getElementById("accSavaxInput");
 
 function makeRow(p) {
   const row = document.createElement("div");
@@ -527,6 +675,9 @@ function renderSettingsForm() {
   pairsFormRows.innerHTML = "";
   pairs.forEach(p => pairsFormRows.appendChild(makeRow(p)));
   alertThresholdInput.value = ALERT_THRESHOLD;
+  accAvaxInput.value = account.avax || "";
+  accPharInput.value = account.phar || "";
+  accSavaxInput.value = account.savax || "";
 }
 
 document.getElementById("addRowBtn").addEventListener("click", () => {
@@ -549,6 +700,7 @@ document.getElementById("resetConfigBtn").addEventListener("click", () => {
   const cfg = loadConfig();
   pairs = cfg.pairs;
   ALERT_THRESHOLD = cfg.alertThreshold;
+  account = cfg.account;
   deriveLowHigh(pairs);
   initGrid();
   settingsPanel.style.display = "none";
@@ -573,9 +725,14 @@ document.getElementById("saveConfigBtn").addEventListener("click", () => {
   }
   const newThreshold = parseFloat(alertThresholdInput.value);
   ALERT_THRESHOLD = isNaN(newThreshold) || newThreshold <= 0 ? DEFAULT_ALERT_THRESHOLD : newThreshold;
+  account = sanitizeAccount({
+    avax: accAvaxInput.value,
+    phar: accPharInput.value,
+    savax: accSavaxInput.value
+  });
   pairs = newPairs;
   deriveLowHigh(pairs);
-  saveConfig({ pairs, alertThreshold: ALERT_THRESHOLD });
+  saveConfig({ pairs, alertThreshold: ALERT_THRESHOLD, account });
   initGrid();
   settingsPanel.style.display = "none";
   refreshAll();
@@ -598,6 +755,17 @@ function fmtMcap(num) {
   if (n >= 1e6) return "$" + (n / 1e6).toFixed(2) + "M";
   if (n >= 1e3) return "$" + (n / 1e3).toFixed(1) + "K";
   return "$" + n.toFixed(0);
+}
+
+function fmtAvax(num, digits = 2) {
+  if (num === null || num === undefined || isNaN(num)) return "—";
+  return Number(num).toLocaleString("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }) + " AVAX";
+}
+
+function fmtRate(num) {
+  if (num === null || num === undefined || isNaN(num)) return "—";
+  const n = Number(num);
+  return (n >= 1 ? n.toFixed(4) : n.toPrecision(4)) + " AVAX";
 }
 
 async function fetchPair(p, i) {
@@ -662,8 +830,85 @@ async function fetchPair(p, i) {
   }
 }
 
+/* =========================================================
+   COMPTE TOTAL (en AVAX, sans PnL)
+   - PHAR : quantité × taux PHAR/AVAX ÷ 2 (taxe)
+   - sAVAX : quantité × taux sAVAX/AVAX
+   ========================================================= */
+function pairsForToken(allPairs, tokenAddr) {
+  const addr = tokenAddr.toLowerCase();
+  return allPairs
+    .filter(p => p.chainId === ACCOUNT_CHAIN && p.baseToken && p.baseToken.address.toLowerCase() === addr)
+    .sort((a, b) => ((b.liquidity && b.liquidity.usd) || 0) - ((a.liquidity && a.liquidity.usd) || 0));
+}
+
+// Taux du token en AVAX : paire contre WAVAX en priorité (priceNative),
+// sinon prix USD du token ÷ prix USD de l'AVAX.
+function rateInAvax(allPairs, tokenAddr, avaxUsd) {
+  const list = pairsForToken(allPairs, tokenAddr);
+  if (list.length === 0) return { rate: null, usd: null };
+  const wavax = TOKENS.WAVAX.toLowerCase();
+  const vsAvax = list.find(p => p.quoteToken && p.quoteToken.address.toLowerCase() === wavax && p.priceNative);
+  const best = list[0];
+  const usd = best.priceUsd ? parseFloat(best.priceUsd) : null;
+  if (vsAvax) return { rate: parseFloat(vsAvax.priceNative), usd };
+  if (usd !== null && avaxUsd) return { rate: usd / avaxUsd, usd };
+  return { rate: null, usd };
+}
+
+async function fetchAccount() {
+  const card = document.getElementById("accountCard");
+  try {
+    const addrs = [TOKENS.WAVAX, TOKENS.PHAR, TOKENS.SAVAX].join(",");
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addrs}`);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const allPairs = Array.isArray(data) ? data : (data.pairs || []);
+
+    const avaxPairs = pairsForToken(allPairs, TOKENS.WAVAX);
+    const avaxUsd = avaxPairs.length && avaxPairs[0].priceUsd ? parseFloat(avaxPairs[0].priceUsd) : null;
+
+    const phar = rateInAvax(allPairs, TOKENS.PHAR, avaxUsd);
+    const savax = rateInAvax(allPairs, TOKENS.SAVAX, avaxUsd);
+
+    const avaxPart = account.avax;
+    const pharPart = phar.rate !== null ? account.phar * phar.rate / PHAR_TAX_DIVISOR : null;
+    const savaxPart = savax.rate !== null ? account.savax * savax.rate : null;
+
+    const missing = (account.phar > 0 && pharPart === null) || (account.savax > 0 && savaxPart === null);
+    const total = avaxPart + (pharPart || 0) + (savaxPart || 0);
+    const totalUsd = avaxUsd ? total * avaxUsd : null;
+
+    card.innerHTML = `
+      <div class="name">Compte total</div>
+      <div class="account-total">${fmtAvax(total)}</div>
+      <div class="account-usd">${totalUsd !== null ? "≈ " + fmtUsd(totalUsd) : ""}${missing ? ' · <span class="error">taux manquant, total incomplet</span>' : ""}</div>
+      <div class="row">
+        <span class="label">AVAX (${account.avax.toLocaleString("fr-FR")})</span>
+        <span class="value">${fmtAvax(avaxPart)}</span>
+      </div>
+      <div class="row">
+        <span class="label">PHAR (${account.phar.toLocaleString("fr-FR")})</span>
+        <span class="value">${fmtAvax(pharPart)}<small>taux ${fmtRate(phar.rate)} ÷ ${PHAR_TAX_DIVISOR} (taxe)</small></span>
+      </div>
+      <div class="row">
+        <span class="label">sAVAX (${account.savax.toLocaleString("fr-FR")})</span>
+        <span class="value">${fmtAvax(savaxPart)}<small>taux ${fmtRate(savax.rate)}</small></span>
+      </div>
+      <div class="row">
+        <span class="label">Prix AVAX</span>
+        <span class="value">${fmtUsd(avaxUsd)}</span>
+      </div>
+      ${account.avax === 0 && account.phar === 0 && account.savax === 0
+        ? `<div class="note">Renseignez vos quantités dans ⚙️ Paramètres → Compte total.</div>` : ""}
+    `;
+  } catch (e) {
+    card.innerHTML = `<div class="name">Compte total</div><div class="error">Erreur : ${e.message}</div>`;
+  }
+}
+
 async function refreshAll() {
-  await Promise.all(pairs.map((p, i) => fetchPair(p, i)));
+  await Promise.all([...pairs.map((p, i) => fetchPair(p, i)), fetchAccount()]);
   applySort();
   renderSummary();
   checkStartupAlerts();
