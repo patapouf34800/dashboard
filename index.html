@@ -368,6 +368,9 @@
     color: var(--accent);
     margin: 4px 0 2px 0;
   }
+  .value small.chg.up, .chg.up { color: var(--green); }
+  .value small.chg.down, .chg.down { color: var(--red); }
+  .account-chg { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
   .account-usd {
     font-size: 13px;
     color: var(--muted);
@@ -911,6 +914,39 @@ function getLinkUsd(linkPairs) {
   return { usd: null, src: "" };
 }
 
+/* ---------- Variations 24h ----------
+   On prend priceChange.h24 d'une paire cotée en stablecoin (= variation en $),
+   puis on convertit en variation "en AVAX" :
+   (1 + var token $) / (1 + var AVAX $) - 1                                  */
+const STABLES = ["USDC", "USDT", "USDC.E", "USDT.E", "USDT0", "DAI"];
+
+function usdChange24(list) {
+  const has = p => p.priceChange && p.priceChange.h24 !== undefined && p.priceChange.h24 !== null;
+  const stable = list.find(p => has(p) && p.quoteToken && STABLES.includes((p.quoteToken.symbol || "").toUpperCase()));
+  const any = stable || list.find(has);
+  return any ? Number(any.priceChange.h24) : null;
+}
+
+function rateChange(tokenUsdChg, avaxUsdChg) {
+  if (tokenUsdChg === null || avaxUsdChg === null) return null;
+  return ((1 + tokenUsdChg / 100) / (1 + avaxUsdChg / 100) - 1) * 100;
+}
+
+// Valeur il y a 24h à partir de la valeur actuelle et de la variation en %
+function prev24(cur, chg) {
+  if (cur === null) return null;
+  return chg === null ? cur : cur / (1 + chg / 100);
+}
+
+function chgHtml(pct, delta, unit) {
+  if (pct === null || isNaN(pct)) return `<small>24h : —</small>`;
+  const cls = pct >= 0 ? "up" : "down";
+  const sign = pct >= 0 ? "+" : "-";
+  const d = delta !== undefined && delta !== null
+    ? ` (${sign}${unit === "usd" ? fmtUsd(Math.abs(delta)) : fmtAvax(Math.abs(delta))})` : "";
+  return `<small class="chg ${cls}">${sign}${Math.abs(pct).toFixed(2)} %${d} · 24h</small>`;
+}
+
 async function fetchAccount() {
   const card = document.getElementById("accountCard");
   try {
@@ -938,9 +974,29 @@ async function fetchAccount() {
     const total = avaxPart + (pharPart || 0) + (savaxPart || 0) + (linkPart || 0);
     const totalUsd = avaxUsd ? total * avaxUsd : null;
 
+    // --- Variations 24h ---
+    const avaxChg = usdChange24(pairsForToken(allPairs, TOKENS.WAVAX));
+    const pharChg = rateChange(usdChange24(pairsForToken(allPairs, TOKENS.PHAR)), avaxChg);
+    const savaxChg = rateChange(usdChange24(pairsForToken(allPairs, TOKENS.SAVAX)), avaxChg);
+    const linkChg = rateChange(usdChange24(pairsForToken(linkPairs, LINK_TOKENS.LINK, LINK_CHAIN)), avaxChg);
+
+    const pharPrev = prev24(pharPart, pharChg);
+    const savaxPrev = prev24(savaxPart, savaxChg);
+    const linkPrev = prev24(linkPart, linkChg);
+    const avaxUsdPrev = prev24(avaxUsd, avaxChg);
+
+    const totalPrev = avaxPart + (pharPrev || 0) + (savaxPrev || 0) + (linkPrev || 0);
+    const totalDelta = total - totalPrev;
+    const totalChg = totalPrev > 0 ? (totalDelta / totalPrev) * 100 : null;
+    const totalCls = totalDelta >= 0 ? "up" : "down";
+    const totalSign = totalDelta >= 0 ? "+" : "-";
+
     card.innerHTML = `
       <div class="name">Compte total</div>
       <div class="account-total">${fmtAvax(total)}</div>
+      ${totalChg !== null
+        ? `<div class="account-chg chg ${totalCls}">${totalSign}${fmtAvax(Math.abs(totalDelta))} (${totalSign}${Math.abs(totalChg).toFixed(2)} %) · 24h</div>`
+        : ""}
       <div class="account-usd">${totalUsd !== null ? "≈ " + fmtUsd(totalUsd) : ""}${missing ? ' · <span class="error">taux manquant, total incomplet</span>' : ""}</div>
       <div class="row">
         <span class="label">AVAX (${account.avax.toLocaleString("fr-FR")})</span>
@@ -948,19 +1004,19 @@ async function fetchAccount() {
       </div>
       <div class="row">
         <span class="label">PHAR (${account.phar.toLocaleString("fr-FR")})</span>
-        <span class="value">${fmtAvax(pharPart)}<small>taux ${fmtRate(phar.rate)} ÷ ${PHAR_TAX_DIVISOR} (taxe)</small></span>
+        <span class="value">${fmtAvax(pharPart)}<small>taux ${fmtRate(phar.rate)} ÷ ${PHAR_TAX_DIVISOR} (taxe)</small>${account.phar > 0 ? chgHtml(pharChg, pharPart !== null && pharPrev !== null ? pharPart - pharPrev : null, "avax") : ""}</span>
       </div>
       <div class="row">
         <span class="label">sAVAX (${account.savax.toLocaleString("fr-FR")})</span>
-        <span class="value">${fmtAvax(savaxPart)}<small>taux ${fmtRate(savax.rate)}</small></span>
+        <span class="value">${fmtAvax(savaxPart)}<small>taux ${fmtRate(savax.rate)}</small>${account.savax > 0 ? chgHtml(savaxChg, savaxPart !== null && savaxPrev !== null ? savaxPart - savaxPrev : null, "avax") : ""}</span>
       </div>
       <div class="row">
         <span class="label">LINK (${account.link.toLocaleString("fr-FR")})</span>
-        <span class="value">${account.link > 0 ? fmtAvax(linkPart) : fmtAvax(0)}${account.link > 0 ? `<small>taux ${fmtRate(linkRate)} · LINK ${fmtUsd(link.usd)} (${link.src || "—"})</small>` : ""}</span>
+        <span class="value">${account.link > 0 ? fmtAvax(linkPart) : fmtAvax(0)}${account.link > 0 ? `<small>taux ${fmtRate(linkRate)} · LINK ${fmtUsd(link.usd)} (${link.src || "—"})</small>${chgHtml(linkChg, linkPart !== null && linkPrev !== null ? linkPart - linkPrev : null, "avax")}` : ""}</span>
       </div>
       <div class="row">
         <span class="label">Prix AVAX</span>
-        <span class="value">${fmtUsd(avaxUsd)}${avax.src ? `<small>${avax.src}</small>` : ""}</span>
+        <span class="value">${fmtUsd(avaxUsd)}${avax.src ? `<small>${avax.src}</small>` : ""}${chgHtml(avaxChg, avaxUsd !== null && avaxUsdPrev !== null ? avaxUsd - avaxUsdPrev : null, "usd")}</span>
       </div>
       ${account.avax === 0 && account.phar === 0 && account.savax === 0 && account.link === 0
         ? `<div class="note">Renseignez vos quantités dans ⚙️ Paramètres → Compte total.</div>` : ""}
