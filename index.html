@@ -229,7 +229,7 @@
   }
   .account-row {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 8px;
   }
   @media (max-width: 480px) {
@@ -405,6 +405,10 @@
         <label for="accSavaxInput">Quantité de sAVAX</label>
         <input type="number" step="any" min="0" id="accSavaxInput" placeholder="0">
       </div>
+      <div>
+        <label for="accLinkInput">Quantité de LINK (arbitrage)</label>
+        <input type="number" step="any" min="0" id="accLinkInput" placeholder="0">
+      </div>
     </div>
   </div>
 
@@ -482,7 +486,7 @@ const DEFAULT_PAIRS = [
   { chain: "blabla", address: "0x65137aF8C54199627f74db33573b3CdDE7409BE9", bag: 2000000, invested: 10 },
 ];
 const DEFAULT_ALERT_THRESHOLD = 30;
-const DEFAULT_ACCOUNT = { avax: 0, phar: 0, savax: 0 };
+const DEFAULT_ACCOUNT = { avax: 0, phar: 0, savax: 0, link: 0 };
 const STORAGE_KEY = "dexDashboardConfig_v1";
 const SNAPSHOT_KEY = "dexDashboardSnapshots_v1";
 const TAB_STORAGE_KEY = "dexDashboardTab_v1";
@@ -496,13 +500,20 @@ const TOKENS = {
   WAVAX: "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7",
   PHAR:  "0x13A466998Ce03Db73aBc2d4DF3bBD845Ed1f28E7", // PHAR (Pharaoh V3)
   SAVAX: "0x2b2C81e08f1Af8835a78Bb2A90AE924ACE0eA4bE", // sAVAX (Benqi)
+  USDT_AVAX: "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7", // USDt natif Avalanche
+};
+// LINK : prix pris sur Ethereum (Uniswap, paire LINK/USDT en priorité)
+const LINK_CHAIN = "ethereum";
+const LINK_TOKENS = {
+  LINK: "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+  USDT: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
 };
 const PHAR_TAX_DIVISOR = 2; // PHAR compté à 50 % à cause de la taxe
 
 function sanitizeAccount(a) {
   const out = { ...DEFAULT_ACCOUNT };
   if (a && typeof a === "object") {
-    ["avax", "phar", "savax"].forEach(k => {
+    ["avax", "phar", "savax", "link"].forEach(k => {
       const v = parseFloat(a[k]);
       out[k] = isNaN(v) || v < 0 ? 0 : v;
     });
@@ -644,6 +655,7 @@ const alertThresholdInput = document.getElementById("alertThresholdInput");
 const accAvaxInput = document.getElementById("accAvaxInput");
 const accPharInput = document.getElementById("accPharInput");
 const accSavaxInput = document.getElementById("accSavaxInput");
+const accLinkInput = document.getElementById("accLinkInput");
 
 function makeRow(p) {
   const row = document.createElement("div");
@@ -678,6 +690,7 @@ function renderSettingsForm() {
   accAvaxInput.value = account.avax || "";
   accPharInput.value = account.phar || "";
   accSavaxInput.value = account.savax || "";
+  accLinkInput.value = account.link || "";
 }
 
 document.getElementById("addRowBtn").addEventListener("click", () => {
@@ -728,7 +741,8 @@ document.getElementById("saveConfigBtn").addEventListener("click", () => {
   account = sanitizeAccount({
     avax: accAvaxInput.value,
     phar: accPharInput.value,
-    savax: accSavaxInput.value
+    savax: accSavaxInput.value,
+    link: accLinkInput.value
   });
   pairs = newPairs;
   deriveLowHigh(pairs);
@@ -834,21 +848,42 @@ async function fetchPair(p, i) {
    COMPTE TOTAL (en AVAX, sans PnL)
    - PHAR : quantité × taux PHAR/AVAX ÷ 2 (taxe)
    - sAVAX : quantité × taux sAVAX/AVAX
+   - LINK : quantité × (prix LINK/USDT sur Ethereum ÷ prix AVAX/USDT sur Avalanche)
    ========================================================= */
-function pairsForToken(allPairs, tokenAddr) {
+const liq = p => (p.liquidity && p.liquidity.usd) || 0;
+
+// Récupère les paires d'un ou plusieurs tokens sur une chaîne donnée.
+// Endpoint par chaîne en priorité, ancien endpoint en secours.
+async function fetchTokenPairs(chain, addrs) {
+  try {
+    const res = await fetch(`https://api.dexscreener.com/tokens/v1/${chain}/${addrs.join(",")}`);
+    if (res.ok) {
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : (data.pairs || []);
+      if (list.length) return list;
+    }
+  } catch (e) { /* on tente le secours */ }
+  const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addrs.join(",")}`);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  return Array.isArray(data) ? data : (data.pairs || []);
+}
+
+function pairsForToken(allPairs, tokenAddr, chain = ACCOUNT_CHAIN) {
   const addr = tokenAddr.toLowerCase();
   return allPairs
-    .filter(p => p.chainId === ACCOUNT_CHAIN && p.baseToken && p.baseToken.address.toLowerCase() === addr)
-    .sort((a, b) => ((b.liquidity && b.liquidity.usd) || 0) - ((a.liquidity && a.liquidity.usd) || 0));
+    .filter(p => p.chainId === chain && p.baseToken && p.baseToken.address.toLowerCase() === addr)
+    .sort((a, b) => liq(b) - liq(a));
 }
+
+const quoteIs = (p, addr) => p.quoteToken && p.quoteToken.address.toLowerCase() === addr.toLowerCase();
 
 // Taux du token en AVAX : paire contre WAVAX en priorité (priceNative),
 // sinon prix USD du token ÷ prix USD de l'AVAX.
 function rateInAvax(allPairs, tokenAddr, avaxUsd) {
   const list = pairsForToken(allPairs, tokenAddr);
   if (list.length === 0) return { rate: null, usd: null };
-  const wavax = TOKENS.WAVAX.toLowerCase();
-  const vsAvax = list.find(p => p.quoteToken && p.quoteToken.address.toLowerCase() === wavax && p.priceNative);
+  const vsAvax = list.find(p => quoteIs(p, TOKENS.WAVAX) && p.priceNative);
   const best = list[0];
   const usd = best.priceUsd ? parseFloat(best.priceUsd) : null;
   if (vsAvax) return { rate: parseFloat(vsAvax.priceNative), usd };
@@ -856,27 +891,51 @@ function rateInAvax(allPairs, tokenAddr, avaxUsd) {
   return { rate: null, usd };
 }
 
+// Prix AVAX en USDT : paire WAVAX/USDt sur Avalanche en priorité
+function getAvaxUsd(allPairs) {
+  const list = pairsForToken(allPairs, TOKENS.WAVAX);
+  const vsUsdt = list.find(p => quoteIs(p, TOKENS.USDT_AVAX) && p.priceNative);
+  if (vsUsdt) return { usd: parseFloat(vsUsdt.priceNative), src: "AVAX/USDt Avalanche" };
+  if (list.length && list[0].priceUsd) return { usd: parseFloat(list[0].priceUsd), src: "paire WAVAX la plus liquide" };
+  return { usd: null, src: "" };
+}
+
+// Prix LINK en USDT : Uniswap LINK/USDT sur Ethereum en priorité
+function getLinkUsd(linkPairs) {
+  const list = pairsForToken(linkPairs, LINK_TOKENS.LINK, LINK_CHAIN);
+  const uni = list.filter(p => (p.dexId || "").toLowerCase().includes("uniswap"));
+  const uniUsdt = uni.find(p => quoteIs(p, LINK_TOKENS.USDT) && p.priceNative);
+  if (uniUsdt) return { usd: parseFloat(uniUsdt.priceNative), src: "Uniswap LINK/USDT" };
+  const best = uni[0] || list[0];
+  if (best && best.priceUsd) return { usd: parseFloat(best.priceUsd), src: (best.dexId || "") + " " + best.baseToken.symbol + "/" + best.quoteToken.symbol };
+  return { usd: null, src: "" };
+}
+
 async function fetchAccount() {
   const card = document.getElementById("accountCard");
   try {
-    const addrs = [TOKENS.WAVAX, TOKENS.PHAR, TOKENS.SAVAX].join(",");
-    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addrs}`);
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-    const allPairs = Array.isArray(data) ? data : (data.pairs || []);
+    const [allPairs, linkPairs] = await Promise.all([
+      fetchTokenPairs(ACCOUNT_CHAIN, [TOKENS.WAVAX, TOKENS.PHAR, TOKENS.SAVAX]),
+      account.link > 0 ? fetchTokenPairs(LINK_CHAIN, [LINK_TOKENS.LINK]).catch(() => []) : Promise.resolve([])
+    ]);
 
-    const avaxPairs = pairsForToken(allPairs, TOKENS.WAVAX);
-    const avaxUsd = avaxPairs.length && avaxPairs[0].priceUsd ? parseFloat(avaxPairs[0].priceUsd) : null;
+    const avax = getAvaxUsd(allPairs);
+    const avaxUsd = avax.usd;
 
     const phar = rateInAvax(allPairs, TOKENS.PHAR, avaxUsd);
     const savax = rateInAvax(allPairs, TOKENS.SAVAX, avaxUsd);
+    const link = getLinkUsd(linkPairs);
+    const linkRate = link.usd !== null && avaxUsd ? link.usd / avaxUsd : null;
 
     const avaxPart = account.avax;
     const pharPart = phar.rate !== null ? account.phar * phar.rate / PHAR_TAX_DIVISOR : null;
     const savaxPart = savax.rate !== null ? account.savax * savax.rate : null;
+    const linkPart = linkRate !== null ? account.link * linkRate : null;
 
-    const missing = (account.phar > 0 && pharPart === null) || (account.savax > 0 && savaxPart === null);
-    const total = avaxPart + (pharPart || 0) + (savaxPart || 0);
+    const missing = (account.phar > 0 && pharPart === null)
+      || (account.savax > 0 && savaxPart === null)
+      || (account.link > 0 && linkPart === null);
+    const total = avaxPart + (pharPart || 0) + (savaxPart || 0) + (linkPart || 0);
     const totalUsd = avaxUsd ? total * avaxUsd : null;
 
     card.innerHTML = `
@@ -896,10 +955,14 @@ async function fetchAccount() {
         <span class="value">${fmtAvax(savaxPart)}<small>taux ${fmtRate(savax.rate)}</small></span>
       </div>
       <div class="row">
-        <span class="label">Prix AVAX</span>
-        <span class="value">${fmtUsd(avaxUsd)}</span>
+        <span class="label">LINK (${account.link.toLocaleString("fr-FR")})</span>
+        <span class="value">${account.link > 0 ? fmtAvax(linkPart) : fmtAvax(0)}${account.link > 0 ? `<small>taux ${fmtRate(linkRate)} · LINK ${fmtUsd(link.usd)} (${link.src || "—"})</small>` : ""}</span>
       </div>
-      ${account.avax === 0 && account.phar === 0 && account.savax === 0
+      <div class="row">
+        <span class="label">Prix AVAX</span>
+        <span class="value">${fmtUsd(avaxUsd)}${avax.src ? `<small>${avax.src}</small>` : ""}</span>
+      </div>
+      ${account.avax === 0 && account.phar === 0 && account.savax === 0 && account.link === 0
         ? `<div class="note">Renseignez vos quantités dans ⚙️ Paramètres → Compte total.</div>` : ""}
     `;
   } catch (e) {
