@@ -371,6 +371,28 @@
   .value small.chg.up, .chg.up { color: var(--green); }
   .value small.chg.down, .chg.down { color: var(--red); }
   .account-chg { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+  .loan-row {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1fr auto;
+    gap: 8px;
+    margin-bottom: 8px;
+    align-items: end;
+  }
+  @media (max-width: 480px) {
+    .loan-row { grid-template-columns: 1fr 1fr; }
+  }
+  .loan-row label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 3px; }
+  .loan-row input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 7px 8px;
+    font-size: 13px;
+  }
+  .loan-row input:focus { outline: none; border-color: var(--accent); }
+  .loan-total { border-top: 2px solid var(--border) !important; margin-top: 4px; }
   .account-usd {
     font-size: 13px;
     color: var(--muted);
@@ -415,6 +437,12 @@
     </div>
   </div>
 
+  <div class="settings-section">
+    <div class="settings-title">Emprunts</div>
+    <div id="loansFormRows"></div>
+    <button class="btn btn-ghost" id="addLoanBtn" type="button">+ Ajouter un emprunt</button>
+  </div>
+
   <div class="setting-field">
     <label for="alertThresholdInput">Seuil d'alerte au démarrage (%)</label>
     <input type="number" step="any" id="alertThresholdInput">
@@ -440,6 +468,7 @@
 <div class="tabs">
   <button class="tab-btn" data-tab="positions" type="button">Positions</button>
   <button class="tab-btn" data-tab="account" type="button">Compte total</button>
+  <button class="tab-btn" data-tab="loan" type="button">Emprunt</button>
 </div>
 
 <!-- ================= ONGLET POSITIONS ================= -->
@@ -472,6 +501,15 @@
   </div>
 </div>
 
+<!-- ================= ONGLET EMPRUNT ================= -->
+<div class="view" id="view-loan">
+  <div class="account-wrap">
+    <div class="card status-accent" id="loanCard">
+      <div class="skeleton">Chargement...</div>
+    </div>
+  </div>
+</div>
+
 <div class="footer">
   <div class="dot"></div>
   <span id="lastUpdate">Chargement...</span>
@@ -490,6 +528,7 @@ const DEFAULT_PAIRS = [
 ];
 const DEFAULT_ALERT_THRESHOLD = 30;
 const DEFAULT_ACCOUNT = { avax: 0, phar: 0, savax: 0, link: 0 };
+const DEFAULT_LOANS = []; // [{ label, amount (AVAX), price ($ par AVAX au moment de l'emprunt) }]
 const STORAGE_KEY = "dexDashboardConfig_v1";
 const SNAPSHOT_KEY = "dexDashboardSnapshots_v1";
 const TAB_STORAGE_KEY = "dexDashboardTab_v1";
@@ -524,6 +563,17 @@ function sanitizeAccount(a) {
   return out;
 }
 
+function sanitizeLoans(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map(l => ({
+      label: (l && l.label ? String(l.label) : "").trim(),
+      amount: parseFloat(l && l.amount),
+      price: parseFloat(l && l.price)
+    }))
+    .filter(l => l.amount > 0 && l.price > 0);
+}
+
 function loadConfig() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -533,7 +583,8 @@ function loadConfig() {
         return {
           pairs: parsed.pairs,
           alertThreshold: typeof parsed.alertThreshold === "number" ? parsed.alertThreshold : DEFAULT_ALERT_THRESHOLD,
-          account: sanitizeAccount(parsed.account)
+          account: sanitizeAccount(parsed.account),
+          loans: sanitizeLoans(parsed.loans)
         };
       }
     }
@@ -543,7 +594,8 @@ function loadConfig() {
   return {
     pairs: JSON.parse(JSON.stringify(DEFAULT_PAIRS)),
     alertThreshold: DEFAULT_ALERT_THRESHOLD,
-    account: { ...DEFAULT_ACCOUNT }
+    account: { ...DEFAULT_ACCOUNT },
+    loans: JSON.parse(JSON.stringify(DEFAULT_LOANS))
   };
 }
 
@@ -571,7 +623,8 @@ function deriveLowHigh(list) {
   });
 }
 
-let { pairs, alertThreshold: ALERT_THRESHOLD, account } = loadConfig();
+let { pairs, alertThreshold: ALERT_THRESHOLD, account, loans } = loadConfig();
+let lastAvaxUsd = null; // prix AVAX courant, partagé avec l'onglet Emprunt
 deriveLowHigh(pairs);
 let snapshots = loadSnapshots();
 let startupCheckDone = false;
@@ -609,10 +662,11 @@ initGrid();
    ========================================================= */
 const tabButtons = document.querySelectorAll(".tab-btn");
 function setTab(tab) {
-  if (tab !== "positions" && tab !== "account") tab = "positions";
+  if (!["positions", "account", "loan"].includes(tab)) tab = "positions";
   tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
   document.getElementById("view-positions").classList.toggle("active", tab === "positions");
   document.getElementById("view-account").classList.toggle("active", tab === "account");
+  document.getElementById("view-loan").classList.toggle("active", tab === "loan");
   localStorage.setItem(TAB_STORAGE_KEY, tab);
 }
 tabButtons.forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
@@ -686,7 +740,41 @@ function makeRow(p) {
   return row;
 }
 
+const loansFormRows = document.getElementById("loansFormRows");
+
+function escAttr(v) {
+  return String(v ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+function makeLoanRow(l) {
+  const row = document.createElement("div");
+  row.className = "loan-row";
+  row.innerHTML = `
+    <div>
+      <label>Libellé (optionnel)</label>
+      <input type="text" class="l-label" value="${escAttr(l.label)}" placeholder="ex: Benqi #1">
+    </div>
+    <div>
+      <label>AVAX empruntés</label>
+      <input type="number" step="any" min="0" class="l-amount" value="${l.amount ?? ""}">
+    </div>
+    <div>
+      <label>Prix AVAX ($)</label>
+      <input type="number" step="any" min="0" class="l-price" value="${l.price ?? ""}">
+    </div>
+    <button type="button" class="remove-row-btn" title="Supprimer">✕</button>
+  `;
+  row.querySelector(".remove-row-btn").addEventListener("click", () => row.remove());
+  return row;
+}
+
+document.getElementById("addLoanBtn").addEventListener("click", () => {
+  loansFormRows.appendChild(makeLoanRow({ label: "", amount: "", price: "" }));
+});
+
 function renderSettingsForm() {
+  loansFormRows.innerHTML = "";
+  loans.forEach(l => loansFormRows.appendChild(makeLoanRow(l)));
   pairsFormRows.innerHTML = "";
   pairs.forEach(p => pairsFormRows.appendChild(makeRow(p)));
   alertThresholdInput.value = ALERT_THRESHOLD;
@@ -717,6 +805,7 @@ document.getElementById("resetConfigBtn").addEventListener("click", () => {
   pairs = cfg.pairs;
   ALERT_THRESHOLD = cfg.alertThreshold;
   account = cfg.account;
+  loans = cfg.loans;
   deriveLowHigh(pairs);
   initGrid();
   settingsPanel.style.display = "none";
@@ -747,9 +836,14 @@ document.getElementById("saveConfigBtn").addEventListener("click", () => {
     savax: accSavaxInput.value,
     link: accLinkInput.value
   });
+  loans = sanitizeLoans([...loansFormRows.querySelectorAll(".loan-row")].map(r => ({
+    label: r.querySelector(".l-label").value,
+    amount: r.querySelector(".l-amount").value,
+    price: r.querySelector(".l-price").value
+  })));
   pairs = newPairs;
   deriveLowHigh(pairs);
-  saveConfig({ pairs, alertThreshold: ALERT_THRESHOLD, account });
+  saveConfig({ pairs, alertThreshold: ALERT_THRESHOLD, account, loans });
   initGrid();
   settingsPanel.style.display = "none";
   refreshAll();
@@ -963,6 +1057,7 @@ async function fetchAccount() {
 
     const avax = getAvaxUsd(allPairs);
     const avaxUsd = avax.usd;
+    lastAvaxUsd = avaxUsd;
 
     const phar = rateInAvax(allPairs, TOKENS.PHAR, avaxUsd);
     const savax = rateInAvax(allPairs, TOKENS.SAVAX, avaxUsd);
@@ -1032,10 +1127,73 @@ async function fetchAccount() {
   }
 }
 
+/* =========================================================
+   EMPRUNT
+   Chaque ligne = des AVAX achetés avec de l'argent emprunté,
+   au prix indiqué. Gain % = (prix actuel - prix d'achat) / prix d'achat
+   ========================================================= */
+function escHtml(v) {
+  return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function renderLoans() {
+  const card = document.getElementById("loanCard");
+  if (!loans.length) {
+    card.innerHTML = `
+      <div class="name">Emprunt</div>
+      <div class="note">Aucun emprunt. Ajoutez vos lignes dans ⚙️ Paramètres → Emprunts
+      (montant en AVAX et prix de l'AVAX au moment de l'emprunt).</div>`;
+    return;
+  }
+  const P = lastAvaxUsd;
+  const gainHtml = (pct, usd) => {
+    if (pct === null || isNaN(pct)) return `<span class="value">—</span>`;
+    const cls = pct >= 0 ? "up" : "down";
+    const sign = pct >= 0 ? "+" : "-";
+    const inAvax = P ? Math.abs(usd) / P : null;
+    return `<span class="value change ${cls}">${sign}${Math.abs(pct).toFixed(2)} %
+      <small class="chg ${cls}">${sign}${fmtUsd(Math.abs(usd))}${inAvax !== null ? ` · ${sign}${fmtAvax(inAvax)}` : ""}</small></span>`;
+  };
+
+  let totAmount = 0, totCost = 0;
+  const rows = loans.map((l, i) => {
+    const cost = l.amount * l.price;
+    totAmount += l.amount;
+    totCost += cost;
+    const pct = P ? (P - l.price) / l.price * 100 : null;
+    const usd = P ? l.amount * (P - l.price) : null;
+    return `
+      <div class="row">
+        <span class="label">${escHtml(l.label || "Emprunt " + (i + 1))}<br>
+          <small>${fmtAvax(l.amount)} @ ${fmtUsd(l.price)} · dette ${fmtUsd(cost)}</small></span>
+        ${gainHtml(pct, usd)}
+      </div>`;
+  }).join("");
+
+  const avgPrice = totCost / totAmount;
+  const totPct = P ? (P - avgPrice) / avgPrice * 100 : null;
+  const totUsd = P ? totAmount * P - totCost : null;
+  const totCls = totUsd === null ? "" : (totUsd >= 0 ? "up" : "down");
+  const totSign = totUsd === null ? "" : (totUsd >= 0 ? "+" : "-");
+
+  card.innerHTML = `
+    <div class="name">Emprunt</div>
+    <div class="account-total">${totPct !== null ? totSign + Math.abs(totPct).toFixed(2) + " %" : "—"}</div>
+    ${totUsd !== null ? `<div class="account-chg chg ${totCls}">${totSign}${fmtUsd(Math.abs(totUsd))} · ${totSign}${fmtAvax(Math.abs(totUsd) / P)}</div>` : ""}
+    <div class="account-usd">Prix AVAX actuel : ${fmtUsd(P)}</div>
+    ${rows}
+    <div class="row loan-total">
+      <span class="label">Total — ${fmtAvax(totAmount)} @ ${fmtUsd(avgPrice)} (prix moyen)<br>
+        <small>dette ${fmtUsd(totCost)} · valeur actuelle ${P ? fmtUsd(totAmount * P) : "—"}</small></span>
+      ${gainHtml(totPct, totUsd)}
+    </div>`;
+}
+
 async function refreshAll() {
   await Promise.all([...pairs.map((p, i) => fetchPair(p, i)), fetchAccount()]);
   applySort();
   renderSummary();
+  renderLoans();
   checkStartupAlerts();
   document.getElementById("lastUpdate").textContent =
     "Dernière mise à jour : " + new Date().toLocaleTimeString("fr-FR");
