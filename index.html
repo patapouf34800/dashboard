@@ -392,7 +392,11 @@
     font-size: 13px;
   }
   .loan-row input:focus { outline: none; border-color: var(--accent); }
-  .loan-total { border-top: 2px solid var(--border) !important; margin-top: 4px; }
+  .account-total.up { color: var(--green); }
+  .account-total.down { color: var(--red); }
+  .card.status-green-l { border-left-color: var(--green); }
+  .card.status-red-l { border-left-color: var(--red); }
+  .loan-sub { font-size: 12px; color: var(--muted); }
   .account-usd {
     font-size: 13px;
     color: var(--muted);
@@ -504,9 +508,10 @@
 <!-- ================= ONGLET EMPRUNT ================= -->
 <div class="view" id="view-loan">
   <div class="account-wrap">
-    <div class="card status-accent" id="loanCard">
+    <div class="card status-accent" id="loanTotalCard">
       <div class="skeleton">Chargement...</div>
     </div>
+    <div class="card" id="loanDetailCard" style="margin-top:16px; display:none"></div>
   </div>
 </div>
 
@@ -1098,7 +1103,7 @@ async function fetchAccount() {
       ${totalChg !== null
         ? `<div class="account-chg chg ${totalCls}">${totalSign}${fmtAvax(Math.abs(totalDelta))} (${totalSign}${Math.abs(totalChg).toFixed(2)} %) · 24h</div>`
         : ""}
-      <div class="account-usd">${totalUsd !== null ? "≈ " + fmtUsd(totalUsd) : ""}${missing ? ' · <span class="error">taux manquant, total incomplet</span>' : ""}</div>
+      <div class="account-usd">${totalUsd !== null ? "≈ " + fmtUsd(totalUsd) : ""}${missing ? ' · <span class="error">taux manquant, total incomplet</span>' : ""}${loans.length ? `<br>dont emprunt = ${fmtAvax(loansTotalAvax())}` : ""}</div>
       <div class="row">
         <span class="label">AVAX (${account.avax.toLocaleString("fr-FR")})</span>
         <span class="value">${fmtAvax(avaxPart)}</span>
@@ -1136,13 +1141,20 @@ function escHtml(v) {
   return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function loansTotalAvax() {
+  return loans.reduce((sum, l) => sum + l.amount, 0);
+}
+
 function renderLoans() {
-  const card = document.getElementById("loanCard");
+  const totalCard = document.getElementById("loanTotalCard");
+  const detailCard = document.getElementById("loanDetailCard");
   if (!loans.length) {
-    card.innerHTML = `
+    totalCard.className = "card status-accent";
+    totalCard.innerHTML = `
       <div class="name">Emprunt</div>
       <div class="note">Aucun emprunt. Ajoutez vos lignes dans ⚙️ Paramètres → Emprunts
       (montant en AVAX et prix de l'AVAX au moment de l'emprunt).</div>`;
+    detailCard.style.display = "none";
     return;
   }
   const P = lastAvaxUsd;
@@ -1150,9 +1162,8 @@ function renderLoans() {
     if (pct === null || isNaN(pct)) return `<span class="value">—</span>`;
     const cls = pct >= 0 ? "up" : "down";
     const sign = pct >= 0 ? "+" : "-";
-    const inAvax = P ? Math.abs(usd) / P : null;
     return `<span class="value change ${cls}">${sign}${Math.abs(pct).toFixed(2)} %
-      <small class="chg ${cls}">${sign}${fmtUsd(Math.abs(usd))}${inAvax !== null ? ` · ${sign}${fmtAvax(inAvax)}` : ""}</small></span>`;
+      <small class="chg ${cls}">${sign}${fmtUsd(Math.abs(usd))}</small></span>`;
   };
 
   let totAmount = 0, totCost = 0;
@@ -1165,7 +1176,7 @@ function renderLoans() {
     return `
       <div class="row">
         <span class="label">${escHtml(l.label || "Emprunt " + (i + 1))}<br>
-          <small>${fmtAvax(l.amount)} @ ${fmtUsd(l.price)} · dette ${fmtUsd(cost)}</small></span>
+          <span class="loan-sub">${fmtAvax(l.amount)} @ ${fmtUsd(l.price)} · dette ${fmtUsd(cost)}</span></span>
         ${gainHtml(pct, usd)}
       </div>`;
   }).join("");
@@ -1173,20 +1184,38 @@ function renderLoans() {
   const avgPrice = totCost / totAmount;
   const totPct = P ? (P - avgPrice) / avgPrice * 100 : null;
   const totUsd = P ? totAmount * P - totCost : null;
-  const totCls = totUsd === null ? "" : (totUsd >= 0 ? "up" : "down");
-  const totSign = totUsd === null ? "" : (totUsd >= 0 ? "+" : "-");
+  const cls = totUsd === null ? "" : (totUsd >= 0 ? "up" : "down");
+  const sign = totUsd === null ? "" : (totUsd >= 0 ? "+" : "-");
 
-  card.innerHTML = `
-    <div class="name">Emprunt</div>
-    <div class="account-total">${totPct !== null ? totSign + Math.abs(totPct).toFixed(2) + " %" : "—"}</div>
-    ${totUsd !== null ? `<div class="account-chg chg ${totCls}">${totSign}${fmtUsd(Math.abs(totUsd))} · ${totSign}${fmtAvax(Math.abs(totUsd) / P)}</div>` : ""}
+  // ---- Carte du haut : total ----
+  totalCard.className = "card " + (cls === "up" ? "status-green-l" : cls === "down" ? "status-red-l" : "status-accent");
+  totalCard.innerHTML = `
+    <div class="name">Emprunt — total</div>
+    <div class="account-total ${cls}">${totPct !== null ? sign + Math.abs(totPct).toFixed(2) + " %" : "—"}</div>
+    ${totUsd !== null ? `<div class="account-chg chg ${cls}">${sign}${fmtUsd(Math.abs(totUsd))}</div>` : ""}
     <div class="account-usd">Prix AVAX actuel : ${fmtUsd(P)}</div>
-    ${rows}
-    <div class="row loan-total">
-      <span class="label">Total — ${fmtAvax(totAmount)} @ ${fmtUsd(avgPrice)} (prix moyen)<br>
-        <small>dette ${fmtUsd(totCost)} · valeur actuelle ${P ? fmtUsd(totAmount * P) : "—"}</small></span>
-      ${gainHtml(totPct, totUsd)}
+    <div class="row">
+      <span class="label">AVAX empruntés</span>
+      <span class="value">${fmtAvax(totAmount)}</span>
+    </div>
+    <div class="row">
+      <span class="label">Prix moyen</span>
+      <span class="value">${fmtUsd(avgPrice)}</span>
+    </div>
+    <div class="row">
+      <span class="label">Dette</span>
+      <span class="value">${fmtUsd(totCost)}</span>
+    </div>
+    <div class="row">
+      <span class="label">Valeur actuelle</span>
+      <span class="value">${P ? fmtUsd(totAmount * P) : "—"}</span>
     </div>`;
+
+  // ---- Carte du bas : détail ----
+  detailCard.style.display = "block";
+  detailCard.innerHTML = `
+    <div class="summary-title">Détail des emprunts</div>
+    ${rows}`;
 }
 
 async function refreshAll() {
