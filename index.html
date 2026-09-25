@@ -447,6 +447,20 @@
     <button class="btn btn-ghost" id="addLoanBtn" type="button">+ Ajouter un emprunt</button>
   </div>
 
+  <div class="settings-section">
+    <div class="settings-title">Sauvegarde / transfert</div>
+    <div class="note" style="margin-top:0; margin-bottom:10px">
+      Exporte positions, compte total, emprunts et réglages pour les récupérer sur un autre appareil.
+    </div>
+    <div class="settings-actions" style="margin-top:0">
+      <button class="btn btn-ghost" id="exportFileBtn" type="button">⬇️ Exporter (fichier)</button>
+      <button class="btn btn-ghost" id="exportCopyBtn" type="button">📋 Copier le JSON</button>
+      <button class="btn btn-ghost" id="importFileBtn" type="button">⬆️ Importer un fichier</button>
+      <button class="btn btn-ghost" id="importPasteBtn" type="button">📥 Coller un JSON</button>
+      <input type="file" id="importFileInput" accept="application/json,.json,text/plain" style="display:none">
+    </div>
+  </div>
+
   <div class="setting-field">
     <label for="alertThresholdInput">Seuil d'alerte au démarrage (%)</label>
     <input type="number" step="any" id="alertThresholdInput">
@@ -885,6 +899,130 @@ function fmtPct(n, d = 2) {
 function fmtSig(n) {
   return Number(n).toLocaleString("fr-FR", { maximumSignificantDigits: 4 });
 }
+
+/* =========================================================
+   IMPORT / EXPORT JSON
+   ========================================================= */
+const EXPORT_APP = "dexDashboard";
+const EXPORT_VERSION = 1;
+
+function buildExport() {
+  return {
+    app: EXPORT_APP,
+    version: EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    config: {
+      pairs: pairs.map(p => ({ chain: p.chain, address: p.address, bag: p.bag, invested: p.invested })),
+      alertThreshold: ALERT_THRESHOLD,
+      account: { ...account },
+      loans: loans.map(l => ({ ...l }))
+    },
+    prefs: { sort: sortBy, tab: localStorage.getItem(TAB_STORAGE_KEY) || "positions" }
+  };
+}
+
+function sanitizePairs(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map(p => ({
+    chain: String(p && p.chain || "").trim(),
+    address: String(p && p.address || "").trim(),
+    bag: parseFloat(p && p.bag),
+    invested: parseFloat(p && p.invested)
+  })).filter(p => p.chain && p.address && p.bag > 0 && p.invested >= 0);
+}
+
+// Accepte le format exporté ({ app, config }) ou directement l'objet config
+function parseImport(text) {
+  let data;
+  try { data = JSON.parse(text); } catch (e) { throw new Error("Ce n'est pas un JSON valide."); }
+  if (!data || typeof data !== "object") throw new Error("Contenu vide ou invalide.");
+  if (data.app && data.app !== EXPORT_APP) throw new Error("Ce fichier ne vient pas de ce dashboard.");
+  const cfg = data.config && typeof data.config === "object" ? data.config : data;
+  if (!("pairs" in cfg) && !("account" in cfg) && !("loans" in cfg)) {
+    throw new Error("Aucune donnée de dashboard trouvée (positions, compte ou emprunts).");
+  }
+  const th = parseFloat(cfg.alertThreshold);
+  return {
+    pairs: sanitizePairs(cfg.pairs),
+    alertThreshold: th > 0 ? th : DEFAULT_ALERT_THRESHOLD,
+    account: sanitizeAccount(cfg.account),
+    loans: sanitizeLoans(cfg.loans),
+    prefs: data.prefs && typeof data.prefs === "object" ? data.prefs : null
+  };
+}
+
+function applyImport(imp) {
+  const summary =
+    `${imp.pairs.length} position(s), ${imp.loans.length} emprunt(s)\n` +
+    `Compte : ${imp.account.avax} AVAX · ${imp.account.phar} PHAR · ${imp.account.savax} sAVAX · ${imp.account.link} LINK\n\n` +
+    `Vos données actuelles sur cet appareil seront remplacées. Continuer ?`;
+  if (!confirm("Importer :\n" + summary)) return;
+  pairs = imp.pairs;
+  ALERT_THRESHOLD = imp.alertThreshold;
+  account = imp.account;
+  loans = imp.loans;
+  deriveLowHigh(pairs);
+  saveConfig({ pairs, alertThreshold: ALERT_THRESHOLD, account, loans });
+  if (imp.prefs) {
+    if (["none", "value", "pnl", "mcap"].includes(imp.prefs.sort)) {
+      sortBy = imp.prefs.sort;
+      sortSelect.value = sortBy;
+      localStorage.setItem(SORT_STORAGE_KEY, sortBy);
+    }
+    if (imp.prefs.tab) setTab(imp.prefs.tab);
+  }
+  initGrid();
+  settingsPanel.style.display = "none";
+  refreshAll(true);
+  alert("Import terminé ✅");
+}
+
+document.getElementById("exportFileBtn").addEventListener("click", () => {
+  const json = JSON.stringify(buildExport(), null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `dashboard-config-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
+document.getElementById("exportCopyBtn").addEventListener("click", async () => {
+  const json = JSON.stringify(buildExport());
+  try {
+    await navigator.clipboard.writeText(json);
+    alert("JSON copié dans le presse-papiers ✅\nCollez-le sur l'autre appareil via « Coller un JSON ».");
+  } catch (e) {
+    // presse-papiers indisponible (fichier ouvert en local, navigateur restrictif…)
+    prompt("Copiez ce texte :", json);
+  }
+});
+
+const importFileInput = document.getElementById("importFileInput");
+document.getElementById("importFileBtn").addEventListener("click", () => importFileInput.click());
+importFileInput.addEventListener("change", async () => {
+  const file = importFileInput.files && importFileInput.files[0];
+  importFileInput.value = ""; // permet de réimporter le même fichier
+  if (!file) return;
+  try {
+    applyImport(parseImport(await file.text()));
+  } catch (e) {
+    alert("Import impossible : " + e.message);
+  }
+});
+
+document.getElementById("importPasteBtn").addEventListener("click", () => {
+  const text = prompt("Collez ici le JSON exporté :");
+  if (!text) return;
+  try {
+    applyImport(parseImport(text));
+  } catch (e) {
+    alert("Import impossible : " + e.message);
+  }
+});
 
 function fmtUsd(num) {
   if (num === null || num === undefined || isNaN(num)) return "—";
