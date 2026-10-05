@@ -651,6 +651,7 @@ function deriveLowHigh(list) {
 
 let { pairs, alertThreshold: ALERT_THRESHOLD, account, loans } = loadConfig();
 let lastAvaxUsd = null; // prix AVAX courant, partagé avec l'onglet Emprunt
+let lastSavaxRate = null; // dernier taux sAVAX/AVAX valide (secours si le RPC échoue)
 deriveLowHigh(pairs);
 let snapshots = loadSnapshots();
 let startupCheckDone = false;
@@ -1191,17 +1192,75 @@ function pairsForToken(allPairs, tokenAddr, chain = ACCOUNT_CHAIN) {
 
 const quoteIs = (p, addr) => p.quoteToken && p.quoteToken.address.toLowerCase() === addr.toLowerCase();
 
-// Taux du token en AVAX : paire contre WAVAX en priorité (priceNative),
-// sinon prix USD du token ÷ prix USD de l'AVAX.
+// Taux du token en AVAX (utilisé pour PHAR) : médiane des pools WAVAX les plus
+// liquides (pools inversés inclus, pools trop petits ignorés), sinon prix USD ÷ prix AVAX.
+const MIN_POOL_LIQ = 20000; // $ — ignore les pools trop petits
+
 function rateInAvax(allPairs, tokenAddr, avaxUsd) {
-  const list = pairsForToken(allPairs, tokenAddr);
-  if (list.length === 0) return { rate: null, usd: null };
-  const vsAvax = list.find(p => quoteIs(p, TOKENS.WAVAX) && p.priceNative);
-  const best = list[0];
-  const usd = best.priceUsd ? parseFloat(best.priceUsd) : null;
-  if (vsAvax) return { rate: parseFloat(vsAvax.priceNative), usd };
-  if (usd !== null && avaxUsd) return { rate: usd / avaxUsd, usd };
-  return { rate: null, usd };
+  const addr = tokenAddr.toLowerCase();
+  const wavax = TOKENS.WAVAX.toLowerCase();
+  const cands = [];
+
+  allPairs.forEach(p => {
+    if (p.chainId !== ACCOUNT_CHAIN || !p.baseToken || !p.quoteToken || !p.priceNative) return;
+    if (liq(p) < MIN_POOL_LIQ) return;
+    const b = p.baseToken.address.toLowerCase();
+    const q = p.quoteToken.address.toLowerCase();
+    const pn = parseFloat(p.priceNative);
+    if (!(pn > 0)) return;
+    if (b === addr && q === wavax) cands.push({ rate: pn, liq: liq(p), p });          // token/WAVAX
+    else if (b === wavax && q === addr) cands.push({ rate: 1 / pn, liq: liq(p), p }); // WAVAX/token (inversé)
+  });
+
+  const baseList = pairsForToken(allPairs, tokenAddr);
+  const usd = baseList[0] && baseList[0].priceUsd ? parseFloat(baseList[0].priceUsd) : null;
+
+  if (cands.length) {
+    cands.sort((a, b) => b.liq - a.liq);
+    const top = cands.slice(0, 3).map(c => c.rate).sort((a, b) => a - b);
+    const rate = top[Math.floor(top.length / 2)]; // médiane
+    return { rate, usd, src: `${cands[0].p.dexId} · médiane de ${top.length} pool(s)` };
+  }
+  if (usd !== null && avaxUsd) return { rate: usd / avaxUsd, usd, src: "prix USD ÷ prix AVAX" };
+  return { rate: null, usd, src: "" };
+}
+
+// ---------- sAVAX : taux officiel Benqi lu on-chain (aucun pool DEX) ----------
+// getPooledAvaxByShares(1e18) sur le contrat sAVAX = nombre d'AVAX pour 1 sAVAX.
+// RPC publics sans clé API (le second sert de secours).
+const AVAX_RPCS = [
+  "https://api.avax.network/ext/bc/C/rpc",
+  "https://rpc.nodeflare.app/avax/public"
+];
+
+async function fetchSavaxOfficialRate() {
+  // 0x4a36d6c1 = getPooledAvaxByShares(uint256) ; argument = 1e18 (0x0de0b6b3a7640000)
+  const data = "0x4a36d6c1" + "0".repeat(48) + "0de0b6b3a7640000";
+  for (const url of AVAX_RPCS) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_call",
+          params: [{ to: TOKENS.SAVAX, data }, "latest"]
+        }),
+        signal: ctrl.signal
+      });
+      if (!res.ok) continue;
+      const json = await res.json();
+      if (!json.result || json.result === "0x") continue;
+      const rate = Number(BigInt(json.result)) / 1e18;
+      if (rate > 1 && rate < 3) return rate; // garde-fou de cohérence
+    } catch (e) {
+      /* RPC suivant */
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return null;
 }
 
 // Prix AVAX en USDT : paire WAVAX/USDt sur Avalanche en priorité
@@ -1260,9 +1319,10 @@ function chgHtml(pct, delta, unit) {
 async function fetchAccount(id) {
   const card = document.getElementById("accountCard");
   try {
-    const [allPairs, linkPairs] = await Promise.all([
-      fetchTokenPairs(ACCOUNT_CHAIN, [TOKENS.WAVAX, TOKENS.PHAR, TOKENS.SAVAX]),
-      account.link > 0 ? fetchTokenPairs(LINK_CHAIN, [LINK_TOKENS.LINK]).catch(() => []) : Promise.resolve([])
+    const [allPairs, linkPairs, savaxRate] = await Promise.all([
+      fetchTokenPairs(ACCOUNT_CHAIN, [TOKENS.WAVAX, TOKENS.PHAR]),
+      account.link > 0 ? fetchTokenPairs(LINK_CHAIN, [LINK_TOKENS.LINK]).catch(() => []) : Promise.resolve([]),
+      fetchSavaxOfficialRate()
     ]);
     if (isStale(id)) return;
 
@@ -1271,7 +1331,12 @@ async function fetchAccount(id) {
     lastAvaxUsd = avaxUsd;
 
     const phar = rateInAvax(allPairs, TOKENS.PHAR, avaxUsd);
-    const savax = rateInAvax(allPairs, TOKENS.SAVAX, avaxUsd);
+    if (savaxRate !== null) lastSavaxRate = savaxRate;
+    const savax = {
+      rate: savaxRate ?? lastSavaxRate,
+      src: savaxRate !== null ? "taux officiel Benqi (RPC)"
+         : lastSavaxRate !== null ? "dernier taux connu (RPC indisponible)" : ""
+    };
     const link = getLinkUsd(linkPairs);
     const linkRate = link.usd !== null && avaxUsd ? link.usd / avaxUsd : null;
 
@@ -1289,7 +1354,7 @@ async function fetchAccount(id) {
     // --- Variations 24h ---
     const avaxChg = usdChange24(pairsForToken(allPairs, TOKENS.WAVAX));
     const pharChg = rateChange(usdChange24(pairsForToken(allPairs, TOKENS.PHAR)), avaxChg);
-    const savaxChg = rateChange(usdChange24(pairsForToken(allPairs, TOKENS.SAVAX)), avaxChg);
+    const savaxChg = null; // taux officiel : pas d'historique 24h via RPC public (~0,02 %/jour)
     const linkChg = rateChange(usdChange24(pairsForToken(linkPairs, LINK_TOKENS.LINK, LINK_CHAIN)), avaxChg);
 
     const pharPrev = prev24(pharPart, pharChg);
@@ -1316,11 +1381,11 @@ async function fetchAccount(id) {
       </div>
       <div class="row">
         <span class="label">PHAR (${account.phar.toLocaleString("fr-FR")})</span>
-        <span class="value">${fmtAvax(pharPart)}<small>taux ${fmtRate(phar.rate)} ÷ ${PHAR_TAX_DIVISOR} (taxe)</small>${account.phar > 0 ? chgHtml(pharChg, pharPart !== null && pharPrev !== null ? pharPart - pharPrev : null, "avax") : ""}</span>
+        <span class="value">${fmtAvax(pharPart)}<small>taux ${fmtRate(phar.rate)} ÷ ${PHAR_TAX_DIVISOR} (taxe)${phar.src ? " · " + phar.src : ""}</small>${account.phar > 0 ? chgHtml(pharChg, pharPart !== null && pharPrev !== null ? pharPart - pharPrev : null, "avax") : ""}</span>
       </div>
       <div class="row">
         <span class="label">sAVAX (${account.savax.toLocaleString("fr-FR")})</span>
-        <span class="value">${fmtAvax(savaxPart)}<small>taux ${fmtRate(savax.rate)}</small>${account.savax > 0 ? chgHtml(savaxChg, savaxPart !== null && savaxPrev !== null ? savaxPart - savaxPrev : null, "avax") : ""}</span>
+        <span class="value">${fmtAvax(savaxPart)}<small>taux ${fmtRate(savax.rate)}${savax.src ? " · " + savax.src : ""}</small>${account.savax > 0 ? chgHtml(savaxChg, savaxPart !== null && savaxPrev !== null ? savaxPart - savaxPrev : null, "avax") : ""}</span>
       </div>
       <div class="row">
         <span class="label">LINK (${account.link.toLocaleString("fr-FR")})</span>
