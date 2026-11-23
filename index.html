@@ -582,7 +582,7 @@
         <label class="pl-lbl" for="plRadius" style="margin-top:8px">Rayon de scan (nombre de bins de chaque côté du bin actif)</label>
         <input class="pl-input" id="plRadius" type="number" min="20" max="1000" step="10">
         <label class="pl-lbl" for="plDeposits" style="margin-top:8px">Dépôts initiaux (une ligne par fourchette : prix min, prix max, montant par bin, token)</label>
-        <textarea class="pl-input" id="plDeposits" rows="3" spellcheck="false" placeholder="prix_min prix_max montant_par_bin TOKEN&#10;ex : 10 12 25 USDT"></textarea>
+        <textarea class="pl-input" id="plDeposits" rows="3" spellcheck="false" placeholder="prix_min prix_max montant_par_bin TOKEN&#10;ex : 10 12 25 USDT&#10;(lignes qui se chevauchent = additionnées ; montant négatif = retrait)"></textarea>
         <label class="pl-lbl" for="plDepUsd" style="margin-top:8px">Valeur du dépôt initial en $ (seuil gain / IL)</label>
         <input class="pl-input" id="plDepUsd" type="number" min="1" step="any">
         <div class="pl-btns"><button class="btn btn-primary" id="plSaveLive" type="button">Enregistrer</button></div>
@@ -1711,7 +1711,7 @@ setInterval(refreshAll, 15000);
     if (Number(r.depositUsd) > 0) c.depositUsd = Number(r.depositUsd);
     if (Array.isArray(r.deposits)) {
       c.deposits = r.deposits.map(d => ({ lo: Number(d && d.lo), hi: Number(d && d.hi), perBin: Number(d && d.perBin), token: String(d && d.token || "").trim().slice(0, 12) }))
-        .filter(d => d.lo > 0 && d.hi > d.lo && d.perBin > 0 && /^[A-Za-z0-9.]{2,12}$/.test(d.token)).slice(0, 6);
+        .filter(d => d.lo > 0 && d.hi > d.lo && isFinite(d.perBin) && d.perBin !== 0 && /^[A-Za-z0-9.]{2,12}$/.test(d.token)).slice(0, 20);
     }
     return c;
   }
@@ -1920,9 +1920,14 @@ function decAggregate3(hexStr) {
       const lo = inv ? 1 / d.hi : d.lo, hi = inv ? 1 / d.lo : d.hi;
       const i0 = Math.ceil(idOf(lo * (1 - tol))), i1 = Math.floor(idOf(hi * (1 + tol)));
       for (let id = i0; id <= i1 && id - i0 < 5000; id++) {
-        out.perBin.set(id, side === "x" ? { x: d.perBin, y: 0 } : { x: 0, y: d.perBin });
-        out[side] += d.perBin; out.bins++;
+        const cur = out.perBin.get(id) || { x: 0, y: 0 };
+        cur[side] += d.perBin;                       // lignes qui se chevauchent : les montants s'additionnent
+        out.perBin.set(id, cur);
       }
+    }
+    for (const [id, v] of out.perBin) {              // bin à net nul (dépôt puis retrait complet) : plus de référence
+      if (Math.abs(v.x) < 1e-12 && Math.abs(v.y) < 1e-12) out.perBin.delete(id);
+      else { out.x += v.x; out.y += v.y; out.bins++; }
     }
     return out;
   }
@@ -2134,16 +2139,16 @@ function decAggregate3(hexStr) {
     for (const line of text.replace(/,/g, ".").split("\n").map(l => l.trim()).filter(Boolean)) {
       const [lo, hi, perBin, token] = line.split(/[\s;]+/);
       const d = { lo: Number(lo), hi: Number(hi), perBin: Number(perBin), token: token || "" };
-      if (!(d.lo > 0 && d.hi > d.lo && d.perBin > 0 && /^[A-Za-z0-9.]{2,12}$/.test(d.token))) return null;
+      if (!(d.lo > 0 && d.hi > d.lo && isFinite(d.perBin) && d.perBin !== 0 && /^[A-Za-z0-9.]{2,12}$/.test(d.token))) return null;
       out.push(d);
     }
-    return out.slice(0, 6);
+    return out.slice(0, 20);
   }
   $("plSaveLive").addEventListener("click", () => {
     const w = $("plWallet").value.trim(), p = $("plPair").value.trim(), rad = parseInt($("plRadius").value, 10);
     const msg = $("plLiveMsg");
     const dep = parseDeposits($("plDeposits").value);
-    if (dep === null) { msg.style.color = "var(--red)"; msg.textContent = "Dépôts : chaque ligne doit être « prix min, prix max, montant par bin, token » (min < max)."; return; }
+    if (dep === null) { msg.style.color = "var(--red)"; msg.textContent = "Dépôts : chaque ligne doit être « prix min, prix max, montant par bin (≠ 0), token » (min < max)."; return; }
     if ((w && !ADDR_RE.test(w)) || (p && !ADDR_RE.test(p))) { msg.style.color = "var(--red)"; msg.textContent = "Adresse invalide (0x + 40 caractères)."; return; }
     cfg.wallet = w; cfg.pair = p;
     cfg.radius = isFinite(rad) ? Math.min(1000, Math.max(20, rad)) : cfg.radius;
